@@ -9,8 +9,8 @@ requires = [
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "pyreggression"
-version = "1.0.1"
+name = "reggression"
+version = "1.0.2"
 authors = [{ name = "Fabricio Olivetti", email = "folivetti@users.noreply.github.com" }]
 description = "Python Wheels for reggression algorithm."
 readme = "README.md"
@@ -27,13 +27,13 @@ classifiers = [
   "Programming Language :: Python :: 3.13",
   "Programming Language :: Python :: Implementation :: CPython",
 ]
-dependencies = ["typing_extensions >=4.6,<5; python_version<'3.8'"]
+dependencies = ["typing_extensions >=4.6,<5; python_version<'3.8'", "numpy >=2", "pandas >=2.2", "scikit-learn >=1.6"]
 
 [project.optional-dependencies]
 mypy = ["types_setuptools >=45"]
 
 [project.scripts]
-"pyreggression" = "pyreggression.__main__:main"
+"reggression" = "reggression.__main__:main"
 
 [tool.bumpver]
 current_version = "v1.0.0"
@@ -48,10 +48,10 @@ push = true
   '^version = "{pep440_version}"$',
   '^current_version = "{version}"$',
 ]
-"src/pyreggression/__init__.py" = [
+"src/reggression/__init__.py" = [
   '^VERSION: str = "{pep440_version}"$',
 ]
-"pyreggression.cabal" = ['^version:         {pep440_version}$']
+"reggression.cabal" = ['^version:         {pep440_version}$']
 
 [tool.cibuildwheel]
 # 18-04-2023:

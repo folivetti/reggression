@@ -1,16 +1,129 @@
-# PyReggression
+# rEGGression (r🥚ression) - Nonlinear regression models exploration and query system with e-graphs (egg).
 
-A Python package for exploring, analyzing, and manipulating symbolic regression results using an e-graph based approach. PyReggression provides a query interface to the r🥚ression engine.
+*r🥚ression* an interactive tool that can help SR users to explore alternative models generated from different sources. These sources can be: the final population of a single run, the Pareto front, the entire history of visited expressions during the search, or a combination of those sources from multiple runs of the same or different algorithms. This can provide a rich library of alternative expressions generated from different biases, induced by different hyper-parameters or algorithms, that can bring invaluable information about the data.
+This tool supports simple queries such as querying for the top-N models filtered by size, complexity, and number of numerical parameters; insert and evaluate new expressions; list and evaluate sub-expressions of the already visited expressions, and also, more advanced queries such as calculate the frequency of common patterns (i.e., building blocks) observed in the set of models; and filter the expressions by patterns with a natural syntax.
 
-More info [here](https://github.com/folivetti/srtree/tree/main/apps/rEGGression)
+This repository provides a CLI and a Python package for rEGGression with a scikit-learn compatible API for symbolic regression.
 
-## Installation
+Instructions:
+
+- [CLI version](#cli)
+- [Python version](#python)
+
+## CLI
+
+### How to use 
 
 ```bash
-pip install pyreggression
+r🥚ression - Nonlinear regression models exploration and query system with
+e-graphs (egg).
+
+Usage: reggression (-d|--dataset INPUT-FILE) [-t|--test ARG] 
+                   [--distribution ARG] [--dump-to ARG] [--load-from ARG] 
+                   [--parse-csv ARG] [--convert ARG] [--parse-parameters] 
+                   [--to ARG] [--calculate-dl]
+
+  Exploration and query system for a database of regression models using
+  e-graphs.
+
+Available options:
+  -d,--dataset INPUT-FILE  CSV dataset.
+  -t,--test ARG            test data (default: "")
+  --distribution ARG       distribution of the data. (default: Gaussian)
+  --dump-to ARG            dump final e-graph to a file. (default: "")
+  --load-from ARG          load initial e-graph from a file. (default: "")
+  --parse-csv ARG          parse-csv CSV file with the format
+                           expression,parameters,fitness. The fitness value
+                           should be maximization and the parameters a ;
+                           separated list (there must be an additional parameter
+                           for sigma in the Gaussian distribution). The format
+                           of the equation is determined by the extension of the
+                           file, supported extensions are operon, pysr, tir,
+                           itea, hl (heuristiclab), gomea, feat, etc.
+                           (default: "")
+  --convert ARG            convert FROM TO, converts equation format from a
+                           given format (see 'parse-csv') to either 'math' or
+                           'numpy'. The 'math' format is compatible with the tir
+                           format, so you can use this to standardize the
+                           equations from multiple sources into a single file.
+                           The output will be written to stdout. (default: "")
+  --parse-parameters       Extract the numerical parameters from the expression.
+                           In this case the csv file should be formatted as
+                           "equation,error,fitness, where 'error' is the error
+                           term used in Gaussia likelihood, it can be empty if
+                           using other distributions."
+  --to ARG                 Format to convert to. (default: MATH)
+  --calculate-dl           (re)calculate DL.
+  -h,--help                Show this help text
 ```
 
-## Features
+The dataset file must contain a header with each features name, and the `--dataset` and `--test` arguments can be accompanied by arguments separated by ':' following the format:
+
+`filename.ext:start_row:end_row:target:features`
+
+where each ':' field is optional. The fields are:
+
+- **start_row:end_row** is the range of the training rows (default 0:nrows-1).
+   every other row not included in this range will be used as validation
+- **target** is either the name of the  (if the datafile has headers) or the index
+   of the target variable
+- **features** is a comma separated list of names or indices to be used as
+  input variables of the regression model.
+
+Example of valid names: `dataset.csv`, `mydata.tsv`, `dataset.csv:20:100`, `dataset.tsv:20:100:price:m2,rooms,neighborhood`, `dataset.csv:::5:0,1,2`.
+
+The format of the file will be determined by the extension (e.g., csv, tsv,...). 
+
+### Demo
+
+[![asciicast](https://asciinema.org/a/713509.svg)](https://asciinema.org/a/713509)
+
+### Installation 
+
+To install rEGGression you'll need:
+
+- `libz`
+- `libnlopt`
+- `libgmp`
+- `ghc-9.6.6`
+- `cabal` or `stack`
+
+### Method 1: PIP
+
+Simply run:
+
+```bash
+pip install reggression 
+```
+
+under your Python environment.
+
+## Method 2: cabal
+
+After installing the dependencies (e.g., `apt install libz libnlopt libgmp`), install [`ghcup`](https://www.haskell.org/ghcup/#)
+
+For Linux, macOS, FreeBSD or WSL2:
+
+```bash 
+curl --proto '=https' --tlsv1.2 -sSf https://get-ghcup.haskell.org | sh
+```
+
+For Windows, run the following in a PowerShell:
+
+```bash
+Set-ExecutionPolicy Bypass -Scope Process -Force;[System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072; try { & ([ScriptBlock]::Create((Invoke-WebRequest https://www.haskell.org/ghcup/sh/bootstrap-haskell.ps1 -UseBasicParsing))) -Interactive -DisableCurl } catch { Write-Error $_ }
+```
+
+After the installation, run `ghcup tui` and install the latest `stack` or `cabal` together with `ghc-9.6.6` (select the items and press `i`).
+To install `srsimplify` simply run:
+
+```bash 
+cabal install
+```
+
+## Python
+
+### Features
 
 - Load and analyze symbolic regression models from e-graph files
 - Import expressions from various symbolic regression tools (TIR, HeuristicLab, Operon, etc.)
@@ -20,7 +133,7 @@ pip install pyreggression
 - Support for different loss functions for various problem types
 - Optimization and reporting capabilities
 
-## Usage
+### Usage
 
 You can find a Jupyter Notebook with examples [here](https://github.com/folivetti/pyreggression/tree/main/test)
 
@@ -117,7 +230,7 @@ test_results = egg.top(10)
 print(test_results)
 ```
 
-## Parameters
+### Parameters
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
@@ -128,7 +241,7 @@ print(test_results)
 | `parseCSV` | str | "" | CSV file with expressions from another tool |
 | `parseParams` | bool | True | Whether to extract parameter values from expressions |
 
-## Supported File Extensions for parseCSV
+### Supported File Extensions for parseCSV
 
 PyReggression can import expressions from various symbolic regression tools:
 
@@ -141,7 +254,7 @@ PyReggression can import expressions from various symbolic regression tools:
 - `.sbp` - SBP
 - `.eplex` - EPLEX, FEAT, BRUSH
 
-## Methods
+### Methods
 
 ### Query Methods
 - `top(n, filters, criteria, pattern, isRoot, negate)`: Returns top expressions by criteria
@@ -204,6 +317,10 @@ archivePrefix = {arXiv},
 }
 ```
 
-
+## Acknowledgments
 
 The bindings were created following the amazing example written by [wenkokke](https://github.com/wenkokke/example-haskell-wheel)
+
+Fabricio Olivetti de Franca is supported by Conselho Nacional de Desenvolvimento Cient\'{i}fico e Tecnol\'{o}gico (CNPq) grant 301596/2022-0.
+
+Gabriel Kronberger is supported by the Austrian Federal Ministry for Climate Action, Environment, Energy, Mobility, Innovation and Technology, the Federal Ministry for Labour and Economy, and the regional government of Upper Austria within the COMET project ProMetHeus (904919) supported by the Austrian Research Promotion Agency (FFG). 

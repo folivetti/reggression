@@ -12,7 +12,7 @@ import Data.Monoid (All(..))
 import qualified Data.IntMap.Strict as IntMap
 import qualified Data.IntSet as IntSet
 import Control.Monad.State.Strict
-import Control.Monad ( forM_, filterM )
+import Control.Monad ( forM_, filterM, forM )
 import Data.Char ( toUpper )
 import qualified Data.Map as Map
 import qualified Data.HashSet as Set
@@ -26,6 +26,7 @@ import Data.SRTree.Recursion
 import Data.SRTree.Eval
 import Data.SRTree.Print hiding ( printExpr )
 import Text.ParseSR (SRAlgs(..), parseSR, parsePat, Output(..), showOutput)
+import System.Random
 
 import Algorithm.SRTree.Likelihoods
 import Algorithm.SRTree.Opt
@@ -39,6 +40,7 @@ import Algorithm.EqSat.DB
 import Algorithm.EqSat.Simplify
 
 import Algorithm.SRTree.ModelSelection
+import Algorithm.EqSat.SearchSR hiding (fitnessFun, fitnessFunRep, fitnessMV)
 
 import Data.Binary ( encode, decode )
 import qualified Data.ByteString.Lazy as BS
@@ -50,6 +52,7 @@ import Debug.Trace
 -- top 5 by fitness|mdl [less than 5 params, less than 10 nodes]
 data Command  = Top Int Filter Criteria PatStr
               | Distribution FilterDist (Maybe Limit) CriteriaDist Int Int
+              | DistTokens
               -- below these will not be a parsable command
               | Report EClassId ArgOpt
               | Optimize EClassId Int ArgOpt
@@ -57,6 +60,7 @@ data Command  = Top Int Filter Criteria PatStr
               | Subtrees EClassId
               | Pareto Criteria
               | CountPat String
+              | ExtractPat EClassId
               | Save String
               | Load String
               | Import String Distribution String Bool
@@ -184,12 +188,16 @@ putEOL :: B.ByteString -> B.ByteString
 putEOL bs | B.last bs == '\n' = bs
           | otherwise         = B.snoc bs '\n'
 
+data PrintResults = MultiExprs [EClassId] | SingleExpr EClassId | Counts [(Pattern, (Int, Double))] | SimpleStr String | NoPrint
+                  deriving (Show)
+
 -- running
-run :: Command -> RndEGraph String
+run :: Command -> MyEGraph PrintResults
 run (Top n filters criteria NoPat) = do
    let getFun = if criteria == ByFitness then getTopFitEClassThat else getTopDLEClassThat
    ids <- getFun n filters
-   printSimpleMultiExprs $ reverse ids
+   pure $ MultiExprs $ reverse ids
+   -- printSimpleMultiExprs (reverse ids)
 
 run (Top n filters criteria withPat) = do
    let (pat', getFun, isParents) =
@@ -199,7 +207,7 @@ run (Top n filters criteria withPat) = do
 
    let etree = parsePat $ B.pack pat'
    case etree of
-     Left _ -> pure $ "no parse for " <> pat'
+     Left _ -> pure . SimpleStr $ "no parse for " <> pat'
      Right pat -> do
         ecs' <- (Prelude.map fromLeft . Prelude.filter isLeft . Prelude.map snd) <$> match pat
         ecs  <- Prelude.mapM canonical ecs'
@@ -207,7 +215,8 @@ run (Top n filters criteria withPat) = do
                           >>= getParents isParents filters
 
         ids  <- getFun n filters ecs
-        printSimpleMultiExprs (reverse $ nub ids)
+        pure . MultiExprs $ reverse (nub ids)
+        -- printSimpleMultiExprs isCLI (reverse $ nub ids)
 
 run (Distribution pSz mLimit by least top) = do
   ee <- IntSet.toList . IntSet.fromList <$> getTopFitEClassThat top (const True) -- getAllEvaluatedEClasses
@@ -217,28 +226,42 @@ run (Distribution pSz mLimit by least top) = do
                      Just (Limit sz asc) -> (sz, asc)
       predCount = (if isAsc then fst else negate . fst) . snd
       predAvgFit = (if isAsc then snd else negate . snd) . snd
-  printMultiCounts (Prelude.take n
+  pure . Counts $ (Prelude.take n
                    $ case by of 
                        ByCount -> sortOn predCount
                        ByAvgFit -> sortOn predAvgFit
                    $ Map.toList
                    $ Map.filterWithKey (\k (v,_) -> v >= least && k /= VarPat 'A' && pSz (lenPat k))
                    allPats)
+                       {-
+  printMultiCounts isCLI (Prelude.take n
+                   $ case by of 
+                       ByCount -> sortOn predCount
+                       ByAvgFit -> sortOn predAvgFit
+                   $ Map.toList
+                   $ Map.filterWithKey (\k (v,_) -> v >= least && k /= VarPat 'A' && pSz (lenPat k))
+                   allPats)
+                   -}
 
-run (Report eid (dist, trainData, testData)) = printExpr trainData testData dist eid
+run (Report eid (dist, trainData, testData)) = pure . SingleExpr $ eid -- printExpr isCLI trainData testData dist eid
 
 run (Optimize eid nIters (dist, trainDatas, testData)) = do -- dist trainData testData
    t <- relabelParams <$> getBestExpr eid
-   (f, thetas) <- fitnessMV nIters dist trainDatas t
+   --(f, thetas) <- fitnessMV False 1 nIters dist (Prelude.zip trainDatas testData) t
+   let dataTrainsVals = Prelude.zip trainDatas testData
+   response <- forM dataTrainsVals $ \(dt, dv) -> fitnessFunRep nIters dist dt t
+   let f = Prelude.minimum (Prelude.map fst response)
+       thetas = Prelude.map snd response
    insertFitness eid f thetas
    let mdl_train  = Prelude.maximum $ Prelude.map (\(theta, (x, y, mYErr)) -> mdl dist mYErr x y theta t) $ Prelude.zip thetas trainDatas
    insertDL eid mdl_train
-   printSimpleMultiExprs [eid]
+   pure . MultiExprs $ [eid]
+   --printSimpleMultiExprs isCLI [eid]
 
 run (Insert expr argOpt) = do
   let etree = parseSR TIR "" False $ B.pack expr
   case etree of
-    Left _     -> pure $ "no parse for " <> expr
+    Left _     -> pure . SimpleStr $ "no parse for " <> expr
     Right tree -> do eid <- fromTree myCost tree
                      run (Optimize eid 100 argOpt)
 
@@ -246,39 +269,54 @@ run (Subtrees eid) = do
    isValid <- gets ((IntMap.member eid) . _eClass)
    if isValid
      then do ids <- getAllChildBestEClasses eid
-             printSimpleMultiExprs ids
-     else pure "Invalid id."
+             pure . MultiExprs $ ids
+             --printSimpleMultiExprs isCLI ids
+     else pure . SimpleStr $ "Invalid id."
 
 run (Pareto crit) = do
    maxSize <- gets (fst . IntMap.findMax . _sizeFitDB . _eDB)
    ecs <- case crit of
-            ByFitness -> getParetoEcsUpTo True  maxSize
-            ByDL      -> getParetoEcsUpTo False maxSize
-   printSimpleMultiExprs ecs
+            ByFitness -> getParetoEcsUpTo 1 maxSize
+            ByDL      -> getParetoDLEcsUpTo 1 maxSize
+   pure . MultiExprs $ ecs
+   -- printSimpleMultiExprs isCLI ecs
 
 run (CountPat spat) = do
   let etree = parsePat $ B.pack spat
   case etree of
-    Left _     -> pure $ "no parse for " <> spat
+    Left _     -> pure . SimpleStr $ "no parse for " <> spat
     Right pat  -> do (p, cnt) <- countPattern pat
-                     pure $ spat <> " appears in " <> show cnt <> " equations."
+                     pure . SimpleStr $ spat <> " appears in " <> show cnt <> " equations."
+                     --if isCLI
+                     --   then do io $ putStrLn $ spat <> " appears in " <> show cnt <> " equations."
+                     --           pure ""
+                     --   else pure $ spat <> " appears in " <> show cnt <> " equations."
 
 run (Save fname) = do
   eg <- get
-  io $ BS.writeFile fname (encode eg)
-  pure "1"
+  lift $ BS.writeFile fname (encode eg)
+  pure NoPrint
 
 run (Load fname) = do
-  eg <- io $ BS.readFile fname
+  eg <- lift $ BS.readFile fname
   put (decode eg)
-  pure "1"
+  pure NoPrint
 
 run (Import fname dist varnames params) = do
   importCSV dist fname varnames params
-  pure "1"
+  pure NoPrint
+
+run DistTokens = do
+  ee <- getAllEvaluatedEClasses
+  allPats <- getAllTokensFrom Map.empty ee
+  pure . Counts $ (Map.toList allPats)
+
+run (ExtractPat eid) = do
+  pats <- getAllPatterns (const True) eid
+  pure . Counts $ Prelude.map (\(p, c) -> (p, (c, 0))) $ Map.toList pats
 
 -- * auxiliary functions
-importCSV :: Distribution -> String -> String -> Bool -> RndEGraph ()
+importCSV :: Distribution -> String -> String -> Bool -> MyEGraph ()
 importCSV dist fname hdr convertParam = cleanDB >> parseEqs >> createDB >> rebuildAllRanges
   where
     alg = getFormat fname
@@ -287,7 +325,7 @@ importCSV dist fname hdr convertParam = cleanDB >> parseEqs >> createDB >> rebui
     toTuple [eq, t, f] = (eq, Prelude.map Prelude.read $ Prelude.filter (not.null) $ splitOn ";" t, fromMaybe (-1.0/0.0) $ readMaybe f)
     toTuple xss = error $ show xss
 
-    parseEqs :: RndEGraph ()
+    parseEqs :: MyEGraph ()
     parseEqs = do content <- Prelude.map (toTuple . splitOn ",") . lines <$> (liftIO $ readFile fname)
                   forM_ content $ \(eq, params, f) -> do
                     case parseSR alg (B.pack hdr) False (B.pack eq) of
@@ -303,7 +341,8 @@ importCSV dist fname hdr convertParam = cleanDB >> parseEqs >> createDB >> rebui
 
 
 parseCSV :: Distribution -> String -> String -> Bool -> IO EGraph
-parseCSV dist fname hdr convertParam = execStateT parseEqs emptyGraph
+parseCSV dist fname hdr convertParam = do g <- (execStateT parseEqs emptyGraph) -- `evalStateT` (mkStdGen 0)
+                                          pure g
   where
     alg = getFormat fname
 
@@ -311,7 +350,7 @@ parseCSV dist fname hdr convertParam = execStateT parseEqs emptyGraph
     toTuple [eq, t, f] = (eq, Prelude.map Prelude.read $ Prelude.filter (not.null) $ splitOn ";" t, fromMaybe (-1.0/0.0) $ readMaybe f)
     toTuple xss = error $ show xss
 
-    parseEqs :: RndEGraph ()
+    parseEqs :: MyEGraph ()
     parseEqs = do content <- Prelude.map (toTuple . splitOn ",") . lines <$> (liftIO $ readFile fname)
                   forM_ content $ \(eq, params, f) -> do
                     case parseSR alg (B.pack hdr) False (B.pack eq) of
@@ -355,7 +394,7 @@ isBest (e', en') = do e <- canonical e'
                       en <- canonize en'
                       pure (en == best)
 
-getParentsOf :: (EClass -> Bool) -> IntSet.IntSet -> Int -> [EClassId] -> RndEGraph IntSet.IntSet
+getParentsOf :: (EClass -> Bool) -> IntSet.IntSet -> Int -> [EClassId] -> MyEGraph IntSet.IntSet
 getParentsOf p visited n queue | IntSet.size visited >= n || null queue = pure visited
 getParentsOf p visited n queue =
    do parents'     <- IntSet.unions <$> Prelude.mapM (\e -> canonical e >>= canonizeParents) queue
@@ -377,7 +416,15 @@ fromLeft _        = undefined
 
 addTuple (a, b) (c, d) = (a+c, b+d)
 
-getAllPatternsFrom :: (Int -> Bool) -> Map.Map Pattern (Int, Double) -> [EClassId] -> EGraphST IO (Map.Map Pattern (Int, Double))
+getAllTokensFrom :: Map.Map Pattern (Int, Double) -> [EClassId] -> MyEGraph (Map.Map Pattern (Int, Double))
+getAllTokensFrom counts [] = pure $ Map.map (\(v1, v2) -> (v1, v2/fromIntegral v1)) counts
+getAllTokensFrom counts (x:xs) = do fit' <- getFitness x
+                                    case fit' of
+                                      Nothing -> getAllTokensFrom counts xs
+                                      Just fit -> do tokens <- Map.map (,fit) <$> getAllTokens x
+                                                     getAllTokensFrom (Map.unionWith addTuple tokens counts) xs
+
+getAllPatternsFrom :: (Int -> Bool) -> Map.Map Pattern (Int, Double) -> [EClassId] -> MyEGraph (Map.Map Pattern (Int, Double))
 getAllPatternsFrom pSz counts []     = pure $ Map.map (\(v1, v2) -> (v1, v2/fromIntegral v1)) counts
 getAllPatternsFrom pSz counts (x:xs) = do fit' <- getFitness x 
                                           case fit' of 
@@ -424,6 +471,21 @@ getAllPatterns pSz eid = do
                   | otherwise -> do patsL <- Map.filterWithKey (\k _ -> (pSz . lenPat) k) <$> getAllPatterns pSz l
                                     patsR <- Map.filterWithKey (\k _ -> (pSz . lenPat) k) <$> getAllPatterns pSz r
                                     pure $ Map.fromList $ (VarPat 'A', 1) : [(relabelVarPat $ Fixed (Bin op l' r'), min vl vr) | (l', vl) <- Map.toList patsL, (r', vr) <- Map.toList patsR]
+
+getAllTokens :: Monad m => EClassId -> EGraphST m (Map.Map Pattern Int)
+getAllTokens eid = do
+  eid' <- canonical eid
+  best <- gets (_best . _info . (IntMap.! eid') . _eClass)
+  case best of
+    Var ix -> pure $ Map.singleton (Fixed (Var ix)) 1
+    Param ix -> pure $ Map.singleton (Fixed (Param ix)) 1
+    Const x -> pure $ Map.singleton (Fixed (Const x)) 1
+    Uni f t -> do pats <- getAllTokens t
+                  pure $ Map.insertWith (+) (Fixed (Uni f (VarPat 'A'))) 1 pats
+    Bin op l r -> do patsL <- getAllTokens l
+                     patsR <- getAllTokens r
+                     pure $ Map.insertWith (+) (Fixed (Bin op (VarPat 'A') (VarPat 'B'))) 1
+                          $ Map.unionWith (+) patsL patsR
 
 isNotTrivial :: Monad m => Int -> EClassId -> EGraphST m Bool
 isNotTrivial n ec = do

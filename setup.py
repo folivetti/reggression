@@ -11,8 +11,8 @@ from setuptools import Extension, setup
 from setuptools.command.build_ext import build_ext
 
 ext_module = Extension(
-    name="pyreggression._binding",
-    sources=["src/pyreggression/binding.i"],
+    name="reggression._binding",
+    sources=["src/reggression/binding.i"],
 )
 
 

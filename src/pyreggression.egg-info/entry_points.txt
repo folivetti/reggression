@@ -1,2 +1,0 @@
-[console_scripts]
-pyreggression = pyreggression.__main__:main

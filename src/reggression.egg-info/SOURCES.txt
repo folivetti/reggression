@@ -1,0 +1,17 @@
+LICENSE
+README.md
+pyproject.toml
+setup.py
+src/reggression/__init__.py
+src/reggression/__main__.py
+src/reggression/_binding.pyi
+src/reggression/binding.i
+src/reggression/binding.py
+src/reggression/typing.py
+src/reggression.egg-info/PKG-INFO
+src/reggression.egg-info/SOURCES.txt
+src/reggression.egg-info/dependency_links.txt
+src/reggression.egg-info/entry_points.txt
+src/reggression.egg-info/requires.txt
+src/reggression.egg-info/top_level.txt
+test/test_pyreggression.py
