@@ -10,6 +10,15 @@ Instructions:
 - [CLI version](#cli)
 - [Python version](#python)
 
+## Changelog
+
+### v1.0.2
+
+- Fused the CLI tool and Python wrapper, you can install both with `pip install`. The executable name is `reggression`.
+- Improved Python interface
+- Added the command `distribution-tokens` (method `distributionOfTokens` in Python) that shows the distributions of tokens and average fitness (requested by @gbomarito)
+- Added the command `extract-pattern` (method `extractPattern` in Python) that shows all the patterns that can be extracted from a single expression (idea from @juliareuter)
+
 ## CLI
 
 ### How to use 
