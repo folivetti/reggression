@@ -282,8 +282,11 @@ reggression myCmd dataset testData loss' loadFrom dumpTo parseCSV' parseParams c
       repl = cmd cmdMap myCmd
       crRun :: MyEGraph String
       crRun = do createDBBest
-                 when (_calcFit args) $ fillFit loss dataTrains
-                 when (_calcDL args && not (_calcFit args)) $ fillDL loss dataTrains
+                 if _calcFit args
+                    then fillFit loss dataTrains
+                    else if _calcDL args
+                           then fillDL loss dataTrains
+                           else pure ()
                  rebuildAllRanges
                  output <- repl
                  when ((not.null) (_dumpTo args)) $ do eg <- get

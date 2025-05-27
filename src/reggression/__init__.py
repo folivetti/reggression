@@ -18,7 +18,7 @@ from ._binding import (
     unsafe_hs_reggression_exit,
 )
 
-VERSION: str = "1.0.3"
+VERSION: str = "1.0.4"
 
 
 _hs_rts_init: bool = False

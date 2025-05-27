@@ -63,7 +63,7 @@ maxVar = cata alg
 fitnessFun :: Int -> Distribution -> DataSet -> Fix SRTree -> PVector -> (Double, PVector)
 fitnessFun nIter distribution (x, y, mYErr) _tree thetaOrig =
   if n <= nVars || isNaN tr
-    then (-(1/0), theta) -- infinity
+    then (-(1/0), thetaOrig) -- infinity
     else (tr, theta)
   where
     (Sz2 _ n)     = MA.size x
@@ -266,19 +266,25 @@ headerCountCLI = titlesH $ Prelude.map bold ["Pattern", "Count", "Avg. Fitness"]
 
 fillDL dist datasets = do
   ecs <- getAllEvaluatedEClasses
+  let (x', _, _) = head datasets
+      (Sz2 _ n)     = MA.size x'
   forM_ ecs $ \ec -> do
     thetas <- getTheta ec
     bestExpr <- relabelParams <$> getBestExpr ec
-    if MA.size (head thetas) /= countParams bestExpr
+    let nVars = maxVar bestExpr
+    if MA.size (head thetas) /= countParams bestExpr || n <= nVars
        then (lift . putStrLn) $ "Wrong number of parameters in " <> showExpr bestExpr <> ": " <> show (head thetas) <> "   " <> show ec
        else do let mdl_trains = Prelude.map (\(theta, (x, y, mYerr)) -> mdl dist mYerr x y theta bestExpr) $ Prelude.zip thetas datasets
                insertDL ec $ Prelude.maximum mdl_trains
 
 fillFit dist trainDatas = do
   ecs <- getAllEvaluatedEClasses
+  let (x', _, _) = head trainDatas
+      (Sz2 _ n)     = MA.size x'
   forM_ ecs $ \ec -> do
     t <- relabelParams <$> getBestExpr ec
-    response <- forM trainDatas $ \dt -> fitnessFunRep 50 dist dt t
+    let nVars = maxVar t
+    response <- forM trainDatas $ \dt -> if n <= nVars then pure (-1.0/0.0, MA.fromList MA.Seq []) else fitnessFunRep 50 dist dt t
     let f      = Prelude.minimum (Prelude.map fst response)
         thetas = Prelude.map snd response
     insertFitness ec f thetas
