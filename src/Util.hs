@@ -3,6 +3,8 @@
 
 module Util where
 
+import Control.Lens ( over )
+
 import qualified Data.Map.Strict as Map
 import Data.Massiv.Array as MA hiding (forM_, forM)
 import Data.SRTree
@@ -12,6 +14,7 @@ import Algorithm.EqSat.Egraph
 import Algorithm.EqSat.Build
 import Algorithm.EqSat.Info
 import Algorithm.EqSat ( recalculateBest )
+import qualified Data.Sequence as FingerTree
 
 import Algorithm.SRTree.NonlinearOpt
 import System.Random
@@ -279,9 +282,11 @@ fillDL dist datasets = do
 
 fillFit dist trainDatas = do
   ecs <- getAllEvaluatedEClasses
+  cleanAllDBs
   let (x', _, _) = head trainDatas
       (Sz2 _ n)     = MA.size x'
   forM_ ecs $ \ec -> do
+    unsetFitness ec
     t <- relabelParams <$> getBestExpr ec
     let nVars = maxVar t
     response <- forM trainDatas $ \dt -> if n <= nVars then pure (-1.0/0.0, MA.fromList MA.Seq []) else fitnessFunRep 50 dist dt t
@@ -290,3 +295,18 @@ fillFit dist trainDatas = do
     insertFitness ec f thetas
     let mdl_train  = if isInfinite f then (1.0/0.0) else Prelude.maximum $ Prelude.map (\(theta, (x, y, mYErr)) -> mdl dist mYErr x y theta t) $ Prelude.zip thetas trainDatas
     insertDL ec mdl_train
+
+
+cleanAllDBs = do
+  modify' $ over (eDB . fitRangeDB) (const FingerTree.Empty)
+          . over (eDB . sizeFitDB) (const IM.empty)
+          . over (eDB . dlRangeDB) (const FingerTree.Empty)
+          . over (eDB . sizeDLDB) (const IM.empty)
+
+unsetFitness :: Monad m => EClassId -> EGraphST m ()
+unsetFitness eId = do
+  --eId <- canonical eId'
+  ec <- gets ((IM.! eId) . _eClass)
+  let newInfo = (_info ec){_fitness = Nothing}
+      newEc   = ec{_info = newInfo}
+  modify' $ over eClass (IM.insert eId newEc)
