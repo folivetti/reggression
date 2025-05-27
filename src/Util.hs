@@ -35,6 +35,7 @@ import Data.SRTree.Datasets
 import Algorithm.EqSat.Queries
 import Algorithm.EqSat.DB
 import Data.List (nub)
+import Data.SRTree.Recursion (Fix (..), cata)
 
 import Algorithm.EqSat.SearchSR hiding (fitnessFun, fitnessFunRep, io)
 import System.Console.Repline hiding (Repl)
@@ -51,17 +52,29 @@ type Repl = HaskelineT (StateT EGraph IO)
 
 io = lift 
 
+maxVar = cata alg
+  where
+    alg (Var ix) = ix
+    alg (Param _) = 0
+    alg (Const _) = 0
+    alg (Bin _ l r) = max l r
+    alg (Uni _ t) = t
+
 fitnessFun :: Int -> Distribution -> DataSet -> Fix SRTree -> PVector -> (Double, PVector)
 fitnessFun nIter distribution (x, y, mYErr) _tree thetaOrig =
-  if isNaN tr
+  if n <= nVars || isNaN tr
     then (-(1/0), theta) -- infinity
     else (tr, theta)
   where
+    (Sz2 _ n)     = MA.size x
+    nVars         = maxVar _tree
     tree          = relabelParams _tree
     nParams       = countParams tree + if distribution == ROXY then 3 else if distribution == Gaussian then 1 else 0
     (theta, _, _) = minimizeNLL' VAR1 distribution mYErr nIter x y tree thetaOrig
     evalF a b c   = negate $ nll distribution c a b tree $ if nParams == 0 then thetaOrig else theta
     tr            = evalF x y mYErr
+
+
 
 {-# INLINE fitnessFun #-}
 
@@ -261,13 +274,13 @@ fillDL dist datasets = do
        else do let mdl_trains = Prelude.map (\(theta, (x, y, mYerr)) -> mdl dist mYerr x y theta bestExpr) $ Prelude.zip thetas datasets
                insertDL ec $ Prelude.maximum mdl_trains
 
-fillFit dist datasets = do
+fillFit dist trainDatas = do
   ecs <- getAllEvaluatedEClasses
   forM_ ecs $ \ec -> do
     t <- relabelParams <$> getBestExpr ec
-    response <- forM trainDatas $ \dt -> fitnessFunRep nIters dist dt t
+    response <- forM trainDatas $ \dt -> fitnessFunRep 50 dist dt t
     let f      = Prelude.minimum (Prelude.map fst response)
         thetas = Prelude.map snd response
     insertFitness ec f thetas
-    let mdl_train  = Prelude.maximum $ Prelude.map (\(theta, (x, y, mYErr)) -> mdl dist mYErr x y theta t) $ Prelude.zip thetas trainDatas
+    let mdl_train  = if isInfinite f then (1.0/0.0) else Prelude.maximum $ Prelude.map (\(theta, (x, y, mYErr)) -> mdl dist mYErr x y theta t) $ Prelude.zip thetas trainDatas
     insertDL ec mdl_train
