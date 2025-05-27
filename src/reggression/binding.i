@@ -10,8 +10,8 @@ int unsafe_hs_reggression_main() {
   return hs_reggression_main();
 }
 
-char * unsafe_hs_reggression_run(char * myCmd, char *dataset, char *testData, char *loss, char *loadFrom, char *dumpTo, char *parseCSV, int parseParams, int calcDL) {
-  return hs_reggression_run(myCmd, dataset, testData, loss, loadFrom, dumpTo, parseCSV, parseParams, calcDL);
+char * unsafe_hs_reggression_run(char * myCmd, char *dataset, char *testData, char *loss, char *loadFrom, char *dumpTo, char *parseCSV, int parseParams, int calcDL, int calcFit) {
+  return hs_reggression_run(myCmd, dataset, testData, loss, loadFrom, dumpTo, parseCSV, parseParams, calcDL, calcFit);
 }
 
 void unsafe_hs_reggression_init(int argc, char **argv) {
@@ -59,6 +59,6 @@ void unsafe_py_write_stderr( char * str) {
 
 char * unsafe_hs_reggression_version();
 int unsafe_hs_reggression_main();
-char * unsafe_hs_reggression_run(char * myCmd, char *dataset, char *testData, char *loss, char *loadFrom, char *dumpTo,  char *parseCSV, int parseParams, int calcDL);
+char * unsafe_hs_reggression_run(char * myCmd, char *dataset, char *testData, char *loss, char *loadFrom, char *dumpTo,  char *parseCSV, int parseParams, int calcDL, int calcFit);
 void unsafe_hs_reggression_init(int argc, char **argv);
 void unsafe_hs_reggression_exit();

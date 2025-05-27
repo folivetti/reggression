@@ -64,7 +64,8 @@ data Args = Args
     _loadFrom      :: String,
     _parseCSV      :: String,
     _parseParams   :: Bool,
-    _calcDL        :: Bool
+    _calcDL        :: Bool,
+    _calcFit       :: Bool
   }
   deriving (Show)
 
@@ -115,6 +116,10 @@ opt = Args
   <*> switch
        ( long "calculate-dl"
        <> help "(re)calculate DL."
+       )
+  <*> switch
+       ( long "calculate-fitness"
+       <> help "refit all expressions (can be slow)."
        )
 
 printFun :: [DataSet] -> [DataSet] -> Distribution -> PrintResults -> MyEGraph ()
@@ -336,8 +341,12 @@ cli = do
       cmdMap = Map.fromList $ Prelude.zip commands funs
 
       repl = evalRepl (const $ pure ">>> ") (cmd cmdMap) [] Nothing Nothing (Word comp) ini final
-      crDB = if _calcDL args then (createDBBest >> fillDL loss dataTrains >> rebuildAllRanges) else (createDBBest >> rebuildAllRanges)
-  when (_calcDL args) $ putStrLn "Calculating DL..."
+      crDB = if _calcFit args
+                then (createDBBest >> fillFit loss dataTrains >> rebuildAllRanges)
+                else if _calcDL args
+                      then (createDBBest >> fillDL loss dataTrains >> rebuildAllRanges)
+                      else (createDBBest >> rebuildAllRanges)
+  when (_calcDL args || _calcFit args) $ putStrLn "Calculating Fitness/DL..."
   eg' <- execStateT crDB eg
   evalStateT repl eg'
   where

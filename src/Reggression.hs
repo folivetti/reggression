@@ -101,10 +101,10 @@ hs_reggression_main =
       return 0
 
 
-foreign export ccall hs_reggression_run :: CString -> CString -> CString -> CString -> CString -> CString -> CString -> CInt -> CInt -> IO CString
+foreign export ccall hs_reggression_run :: CString -> CString -> CString -> CString -> CString -> CString -> CString -> CInt -> CInt -> CInt -> IO CString
 
-hs_reggression_run :: CString -> CString -> CString -> CString -> CString -> CString -> CString -> CInt -> CInt -> IO CString
-hs_reggression_run myCmd dataset testData loss loadFrom dumpTo parseCSV parseParams' calcDL' = do
+hs_reggression_run :: CString -> CString -> CString -> CString -> CString -> CString -> CString -> CInt -> CInt -> CInt -> IO CString
+hs_reggression_run myCmd dataset testData loss loadFrom dumpTo parseCSV parseParams' calcDL' calcFit' = do
   myCmd' <- peekCString myCmd
   dataset' <- peekCString dataset
   testData' <- peekCString testData
@@ -112,5 +112,5 @@ hs_reggression_run myCmd dataset testData loss loadFrom dumpTo parseCSV parsePar
   dumpTo' <- peekCString dumpTo
   loadFrom' <- peekCString loadFrom
   parseCSV' <- peekCString parseCSV
-  out  <- reggression myCmd' dataset' testData' loss' loadFrom' dumpTo' parseCSV' (parseParams' /= 0) (calcDL' /= 0)
+  out  <- reggression myCmd' dataset' testData' loss' loadFrom' dumpTo' parseCSV' (parseParams' /= 0) (calcDL' /= 0) (calcFit' /= 0)
   newCString out

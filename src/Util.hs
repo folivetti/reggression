@@ -260,3 +260,14 @@ fillDL dist datasets = do
        then (lift . putStrLn) $ "Wrong number of parameters in " <> showExpr bestExpr <> ": " <> show (head thetas) <> "   " <> show ec
        else do let mdl_trains = Prelude.map (\(theta, (x, y, mYerr)) -> mdl dist mYerr x y theta bestExpr) $ Prelude.zip thetas datasets
                insertDL ec $ Prelude.maximum mdl_trains
+
+fillFit dist datasets = do
+  ecs <- getAllEvaluatedEClasses
+  forM_ ecs $ \ec -> do
+    t <- relabelParams <$> getBestExpr ec
+    response <- forM trainDatas $ \dt -> fitnessFunRep nIters dist dt t
+    let f      = Prelude.minimum (Prelude.map fst response)
+        thetas = Prelude.map snd response
+    insertFitness ec f thetas
+    let mdl_train  = Prelude.maximum $ Prelude.map (\(theta, (x, y, mYErr)) -> mdl dist mYErr x y theta t) $ Prelude.zip thetas trainDatas
+    insertDL ec mdl_train

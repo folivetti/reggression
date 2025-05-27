@@ -66,7 +66,8 @@ data Args = Args
     _loadFrom      :: String,
     _parseCSV      :: String,
     _parseParams   :: Bool,
-    _calcDL        :: Bool
+    _calcDL        :: Bool,
+    _calcFit       :: Bool
   }
   deriving (Show)
 
@@ -238,9 +239,9 @@ cmd cmdMap input = do let (cmd':args) = words input
 
 helpCmd xs = pure $ hlpMap Map.! (head xs)
 
-reggression myCmd dataset testData loss' loadFrom dumpTo parseCSV' parseParams calcDL = do
+reggression myCmd dataset testData loss' loadFrom dumpTo parseCSV' parseParams calcDL calcFit = do
   let loss        = fromJust $ readMaybe loss'
-      args = Args dataset testData loss dumpTo loadFrom parseCSV' parseParams calcDL
+      args = Args dataset testData loss dumpTo loadFrom parseCSV' parseParams calcDL calcFit
 
   g <- getStdGen
   let datasets = words (_dataset args)
@@ -281,7 +282,8 @@ reggression myCmd dataset testData loss' loadFrom dumpTo parseCSV' parseParams c
       repl = cmd cmdMap myCmd
       crRun :: MyEGraph String
       crRun = do createDBBest
-                 when (_calcDL args) $ fillDL loss dataTrains
+                 when (_calcFit args) $ fillFit loss dataTrains
+                 when (_calcDL args && not (_calcFit args)) $ fillDL loss dataTrains
                  rebuildAllRanges
                  output <- repl
                  when ((not.null) (_dumpTo args)) $ do eg <- get

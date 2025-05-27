@@ -18,7 +18,7 @@ from ._binding import (
     unsafe_hs_reggression_exit,
 )
 
-VERSION: str = "1.0.2"
+VERSION: str = "1.0.3"
 
 
 _hs_rts_init: bool = False
@@ -52,9 +52,9 @@ def main(args: List[str] = []) -> int:
     with hs_rts_init(args):
         return unsafe_hs_reggression_main()
 
-def reggression_run(myCmd : str, dataset : str, testData : str, loss : str, loadFrom : str, dumpTo : str, parseCSV : str, parseParams : int, calcDL : int) -> str:
+def reggression_run(myCmd : str, dataset : str, testData : str, loss : str, loadFrom : str, dumpTo : str, parseCSV : str, parseParams : int, calcDL : int, calcFit : int) -> str:
     with hs_rts_init():
-        return unsafe_hs_reggression_run(myCmd, dataset, testData, loss, loadFrom, dumpTo, parseCSV, parseParams, calcDL)
+        return unsafe_hs_reggression_run(myCmd, dataset, testData, loss, loadFrom, dumpTo, parseCSV, parseParams, calcDL, calcFit)
 
 class Reggression():
     """ Starts up the r🥚ression engine.
@@ -104,7 +104,7 @@ class Reggression():
     >>> egg = PyReggression("data.csv", loadFrom="myData.egraph")
     >>> egg.top(10)
     """
-    def __init__(self, dataset, testData="", loss="MSE", loadFrom="", parseCSV="", parseParams=True):
+    def __init__(self, dataset, testData="", loss="MSE", loadFrom="", parseCSV="", parseParams=True, refit=False):
         losses = ["MSE", "Gaussian", "Bernoulli", "Poisson"]
         if loss not in losses:
             raise ValueError('loss must be one of ', losses)
@@ -118,18 +118,21 @@ class Reggression():
             raise ValueError('egraph or CSV file do not exist')
         if not isinstance(parseParams, bool):
             raise ValueError('parseParams must be a boolean')
+        if not isinstance(refit, bool):
+            raise ValueError('refit must be a boolean')
         self.dataset = dataset
         self.testData = testData
         self.loss = loss
         self.loadFrom = loadFrom
         self.parseCSV = parseCSV
         self.parseParams = int(parseParams)
+        self.refit = refit
 
-        self.temp_file = tempfile.NamedTemporaryFile(mode='w+', newline='', delete=False, delete_on_close=False, suffix='.egraph')
+        self.temp_file = tempfile.NamedTemporaryFile(mode='w+', newline='', delete=False,  dir=os.getcwd(), suffix='.egraph')
         self.tempname = self.temp_file.name
         self.temp_file.close()
         print("Calculating DL...")
-        reggression_run("top 10", self.dataset, self.testData, self.loss, self.loadFrom, self.tempname, self.parseCSV, self.parseParams, 1)
+        reggression_run("top 10", self.dataset, self.testData, self.loss, self.loadFrom, self.tempname, self.parseCSV, self.parseParams, 1, self.refit)
         print("Welcome to r🥚ression")
     def __del__(self):
         ''' remove temporary e-graph file before ending the program '''
@@ -146,7 +149,7 @@ class Reggression():
         df : bool, default=True
             Whether the query returns a DataFrame.
         '''
-        csv_data = reggression_run(query, self.dataset, self.testData, self.loss, self.tempname, self.tempname, self.parseCSV, self.parseParams, 0)
+        csv_data = reggression_run(query, self.dataset, self.testData, self.loss, self.tempname, self.tempname, self.parseCSV, self.parseParams, 0, 0)
         if df and len(csv_data) > 0:
             csv_io = StringIO(csv_data.strip())
             self.results = pd.read_csv(csv_io, header=0)
