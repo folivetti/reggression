@@ -12,6 +12,13 @@ Instructions:
 
 ## Changelog
 
+### v1.0.6
+
+- included method `importFromCSV` to import equations from other SR algorithms
+- fixed bug that may create fake duplicates in e-graph
+- added top-n option in distributionOfTokens
+- fixed bug in pattern matching
+
 ### v1.0.2
 
 - Fused the CLI tool and Python wrapper, you can install both with `pip install`. The executable name is `reggression`.

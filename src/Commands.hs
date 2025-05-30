@@ -52,7 +52,7 @@ import Debug.Trace
 -- top 5 by fitness|mdl [less than 5 params, less than 10 nodes]
 data Command  = Top Int Filter Criteria PatStr
               | Distribution FilterDist (Maybe Limit) CriteriaDist Int Int
-              | DistTokens
+              | DistTokens Int
               -- below these will not be a parsable command
               | Report EClassId ArgOpt
               | Optimize EClassId Int ArgOpt
@@ -214,7 +214,7 @@ run (Top n filters criteria withPat) = do
                           >>= removeNotTrivial (lenPat pat)
                           >>= getParents isParents filters
 
-        ids  <- getFun n filters ecs
+        ids  <- getFun n filters (ecs <> ecs')
         pure . MultiExprs $ reverse (nub ids)
         -- printSimpleMultiExprs isCLI (reverse $ nub ids)
 
@@ -306,8 +306,10 @@ run (Import fname dist varnames params) = do
   importCSV dist fname varnames params
   pure NoPrint
 
-run DistTokens = do
-  ee <- getAllEvaluatedEClasses
+run (DistTokens n) = do
+  ee <- if n > 0
+           then IntSet.toList . IntSet.fromList <$> getTopFitEClassThat n (const True)
+           else getAllEvaluatedEClasses
   allPats <- getAllTokensFrom Map.empty ee
   pure . Counts $ (Map.toList allPats)
 
@@ -325,6 +327,13 @@ importCSV dist fname hdr convertParam = cleanDB >> parseEqs >> createDB >> rebui
     toTuple [eq, t, f] = (eq, Prelude.map Prelude.read $ Prelude.filter (not.null) $ splitOn ";" t, fromMaybe (-1.0/0.0) $ readMaybe f)
     toTuple xss = error $ show xss
 
+    relabelP0 = cata alg
+      where
+        alg (Uni f t) = Fix (Uni f t)
+        alg (Bin op l r) = Fix (Bin op l r)
+        alg (Param ix) = Fix (Param 0)
+        alg x = Fix x
+
     parseEqs :: MyEGraph ()
     parseEqs = do content <- Prelude.map (toTuple . splitOn ",") . lines <$> (liftIO $ readFile fname)
                   forM_ content $ \(eq, params, f) -> do
@@ -333,7 +342,7 @@ importCSV dist fname hdr convertParam = cleanDB >> parseEqs >> createDB >> rebui
                          Right tree' -> do
                            let (tree, ps) = if convertParam then floatConstsToParam tree' else (tree', theta)
                                theta      = if convertParam then if dist==MSE then ps <> params else ps else params
-                           eid <- fromTree myCost tree >>= canonical
+                           eid <- fromTree myCost (relabelP0 tree) >>= canonical
                            -- TODO: how to import MvSR?
                            insertFitness eid f $ [MA.fromList MA.Seq theta]
                            runEqSat myCost rewritesParams 1

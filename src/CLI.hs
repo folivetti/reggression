@@ -198,7 +198,10 @@ importCmd :: Distribution -> String -> [String] -> Repl ()
 importCmd dist varnames (fname:params:_) = egraph $ run (Import fname dist varnames (Prelude.read params)) >>= printFun [] [] dist 
 importCmd dist varnames _   = helpCmd ["import"]
 
-distTokensCmd args = egraph $ run DistTokens >>= printFun [] [] Gaussian
+distTokensCmd [] = helpCmd ["distribution-tokens"]
+distTokensCmd (arg:_) = case readMaybe @Int arg of
+                          Just n -> egraph $ run (DistTokens n) >>= printFun [] [] Gaussian
+                          Nothing -> helpCmd ["distribution-tokens"]
 
 extractPatCmd [] = helpCmd ["extract-pattern"]
 extractPatCmd args = case readMaybe @Int (head args) of

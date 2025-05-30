@@ -151,7 +151,10 @@ loadCmd args = run (Load (unwords args)) >>= printFun [] [] Gaussian
 importCmd dist varnames (fname:params:_) = run (Import fname dist varnames (Prelude.read params)) >>= printFun [] [] dist
 importCmd dist varnames _   = helpCmd ["import"]
 
-distTokensCmd args = run DistTokens >>= printFun [] [] Gaussian
+distTokensCmd [] = helpCmd ["distribution-tokens"]
+distTokensCmd (arg:_) = case readMaybe arg of
+                          Just n -> run (DistTokens n) >>= printFun [] [] Gaussian
+                          Nothing -> helpCmd ["distribution-tokens"]
 
 extractPatCmd args = case readMaybe @Int (head args) of
     Nothing -> pure "The id must be an integer."

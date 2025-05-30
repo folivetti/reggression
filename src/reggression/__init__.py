@@ -18,7 +18,7 @@ from ._binding import (
     unsafe_hs_reggression_exit,
 )
 
-VERSION: str = "1.0.5"
+VERSION: str = "1.0.6"
 
 
 _hs_rts_init: bool = False
@@ -332,3 +332,17 @@ class Reggression():
             Filename
         '''
         return self.runQuery(f"load {fname}", df=False)
+    def importFromCSV(self, fname, extractParameters=True):
+        ''' import equations from a CSV file
+        IMPORTANT: the extension of the CSV file must match the source
+        algorithm used to generate the equations: tir, itea, operon, pysr, bingo, eplex, feat, gomea.
+        The format of the file should be a comma separated list of equation,parameters,fitness
+
+        Parameters
+        ----------
+        fname : str
+            Filename
+        extractParameters : bool
+            whether to convert floating points in the expression to parameters
+        '''
+        return self.runQuery(f"import {fname} {extractParameters}", df=False)
