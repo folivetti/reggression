@@ -210,11 +210,12 @@ run (Top n filters criteria withPat) = do
      Left _ -> pure . SimpleStr $ "no parse for " <> pat'
      Right pat -> do
         ecs' <- (Prelude.map fromLeft . Prelude.filter isLeft . Prelude.map snd) <$> match pat
+
         ecs  <- Prelude.mapM canonical ecs'
                           >>= removeNotTrivial (lenPat pat)
                           >>= getParents isParents filters
 
-        ids  <- getFun n filters (ecs <> ecs')
+        ids  <- getFun n filters (nub $ ecs <> ecs')
         pure . MultiExprs $ reverse (nub ids)
         -- printSimpleMultiExprs isCLI (reverse $ nub ids)
 

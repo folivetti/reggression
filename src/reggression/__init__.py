@@ -18,7 +18,7 @@ from ._binding import (
     unsafe_hs_reggression_exit,
 )
 
-VERSION: str = "1.0.6"
+VERSION: str = "1.0.7"
 
 
 _hs_rts_init: bool = False
@@ -309,11 +309,11 @@ class Reggression():
             e-class id of the expression.
         '''
         return self.runQuery(f"extract-pattern {eid}")
-    def distributionOfTokens(self):
+    def distributionOfTokens(self, top=-1):
         ''' Return the counts and average fitness of tokens.
 
         '''
-        return self.runQuery(f"distribution-tokens")
+        return self.runQuery(f"distribution-tokens {top}")
     def save(self, fname):
         ''' Save the e-graph file
 

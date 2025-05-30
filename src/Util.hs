@@ -132,6 +132,7 @@ printExpr dataTrain dataTest distribution ec = do
 
         pure $ "Info,Training,Test\n"
                <> "Expr," <> showExpr best' <> ",\n"
+               <> "Numpy,\"" <> showPython best' <> "\",\n"
                <> "Nodes," <> show (countNodes $ convertProtectedOps best') <> ",\n"
                <> "params," <>  thetaStr <> ",\n"
                <> intercalate "," ["MSE", mse_trains, mse_tes] <> "\n"
@@ -198,7 +199,7 @@ printsimpleExpr eid = do
        dl' = case dl of
               Nothing -> "NA"
               Just d  -> showFun d
-   pure $ intercalate "," [show eid, showExpr t, fit', "\"" <> p' <> "\"", show sz, dl']
+   pure $ intercalate "," [show eid, showExpr t, "\"" <> showPython t <> "\"", fit', "\"" <> p' <> "\"", show sz, dl']
 
 printsimpleExprCLI eid = do
    let showFun = printf "%.4e"
@@ -257,7 +258,7 @@ printMultiCountsCLI cnts =
      io.putStrLn $ tableString (columnHeaderTableS [fixedLeftCol 50, numCol, numCol] unicodeS headerCountCLI rows)
 
 
-headerSimple = intercalate "," ["Id", "Expression", "Fitness", "Parameters", "Size", "DL"]
+headerSimple = intercalate "," ["Id", "Expression", "Numpy", "Fitness", "Parameters", "Size", "DL"]
 headerCount = intercalate "," ["Pattern", "Count", "AvgFit"]
 
 headerSimpleCLI :: HeaderSpec LineStyle (Formatted String)

@@ -1,6 +1,6 @@
 Metadata-Version: 2.4
 Name: reggression
-Version: 1.0.6
+Version: 1.0.7
 Summary: Python Wheels for reggression algorithm.
 Author-email: Fabricio Olivetti <folivetti@users.noreply.github.com>
 License:                     GNU GENERAL PUBLIC LICENSE
@@ -711,6 +711,10 @@ Instructions:
 - [Python version](#python)
 
 ## Changelog
+
+### v1.0.7
+
+- fixed `distributionOfTokens`
 
 ### v1.0.6
 

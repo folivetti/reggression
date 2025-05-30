@@ -12,6 +12,11 @@ Instructions:
 
 ## Changelog
 
+### v1.0.7
+
+- fixed `distributionOfTokens`
+- added Numpy column in dataframe
+
 ### v1.0.6
 
 - included method `importFromCSV` to import equations from other SR algorithms
