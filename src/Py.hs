@@ -98,6 +98,11 @@ distCmd args = do
   let cmd = parseCmd parseDist (B.pack $ unwords args)
   runIfRight cmd
 
+modCmd []   = helpCmd ["modularity"]
+modCmd args = do
+  let cmd = parseCmd parseModular (B.pack $ unwords args)
+  runIfRight cmd
+
 --reportCmd :: Distribution -> [DataSet] -> [DataSet] -> [String] -> Repl ()
 reportCmd _ _ _ [] = helpCmd ["report"]
 reportCmd dist trainData testData args =
@@ -112,6 +117,10 @@ optimizeCmd dist trainData testData args =
     Nothing -> pure "The id must be an integer."
     Just n  -> do let nIters = if length args > 1 then fromMaybe 100 (readMaybe @Int (args !! 1)) else 100
                   run (Optimize n nIters (dist, trainData, trainData)) >>= printFun trainData testData dist
+
+eqSatCmd _ _ _ [] = helpCmd ["eqsat"]
+eqSatCmd dist trainData testData _ =
+  run (EqSatStep (dist, trainData, trainData)) >>= printFun trainData testData dist
 
 --subtreesCmd :: [String] -> Repl ()
 subtreesCmd [] = helpCmd ["subtrees"]
@@ -160,7 +169,7 @@ extractPatCmd args = case readMaybe @Int (head args) of
     Nothing -> pure "The id must be an integer."
     Just n  -> run (ExtractPat n) >>= printFun [] [] Gaussian
 
-commands = ["help", "top", "report", "optimize", "subtrees", "insert", "count-pattern", "distribution", "pareto", "save", "load", "import", "extract-pattern", "distribution-tokens"]
+commands = ["help", "top", "report", "optimize", "eqsat", "subtrees", "insert", "count-pattern", "distribution", "modularity", "pareto", "save", "load", "import", "extract-pattern", "distribution-tokens"]
 
 topHlp = "top N [FILTER...] [CRITERIA] [[not] matching [root] PATTERN] \n \
          \ \n \
@@ -194,6 +203,12 @@ distHlp = "distribution [FILTER] [LIMIT] \n\n \
           \ or least frequent (asc) patterns. \n\n \
           \ See `help count-pattern` for details on the syntax of pattern."
 
+modHlp = "modularity n [FILTER] [CRITERIA] \n\n \
+          \ FILTER: with size [<|<=|=|>|>=] N \n \
+          \ CRITERIA: [by fitness | by dl] \n\n \
+          \ Shows the top-N equations by the criteria presenting modularity \n \
+          \ (repeated pattern). The filter limits the size of the repeated pattern."
+
 countHlp = "count-pattern PAT \n\n \
            \ Count the number of occurrence of the pattern PAT in the e-graph. \n\n \
            \ A pattern follows the same syntax of an expression: \n\n\
@@ -222,10 +237,12 @@ hlpMap = Map.fromList $ Prelude.zip commands
                             , topHlp
                             , "report N: displays a detailed report for the expression with id N."
                             , "optimize N: (re)optimize expression with id N."
+                            , "eqsat: run a single step of equality saturation and refit any expression with changed number of parameters."
                             , "subtrees N: shows the subtrees for the tree rotted with id N."
                             , "insert EXPR: inserts a new expression EXPR and evaluates."
                             , countHlp
                             , distHlp
+                            , modHlp
                             , "pareto [by fitness| by dl]: shows the pareto front where the first objective is the criteria (default: fitness) and the second objective is model size."
                             , "save FILE: save current e-graph to a file named FILE."
                             , "load FILE: load current e-graph from a file named FILE."
@@ -269,10 +286,12 @@ reggression myCmd dataset testData loss' loadFrom dumpTo parseCSV' parseParams c
              , topCmd
              , reportCmd loss dataTrains dataTests
              , optimizeCmd loss dataTrains dataTests
+             , eqSatCmd loss dataTrains dataTests
              , subtreesCmd
              , insertCmd loss dataTrains dataTests
              , countPatCmd
              , distCmd
+             , modCmd
              , paretoCmd
              , saveCmd
              , loadCmd

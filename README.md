@@ -12,6 +12,12 @@ Instructions:
 
 ## Changelog
 
+### v1.0.8 
+
+- fixed slowdown in `top` with patterns 
+- added `modularity` command to detect modular equations 
+- added `eqsat` command to run a simplified version of equality saturation
+
 ### v1.0.7
 
 - fixed `distributionOfTokens`

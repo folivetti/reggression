@@ -1,6 +1,6 @@
 Metadata-Version: 2.4
 Name: reggression
-Version: 1.0.7
+Version: 1.0.8
 Summary: Python Wheels for reggression algorithm.
 Author-email: Fabricio Olivetti <folivetti@users.noreply.github.com>
 License:                     GNU GENERAL PUBLIC LICENSE
@@ -712,9 +712,14 @@ Instructions:
 
 ## Changelog
 
+### v1.0.8 
+
+- fixed slowdown in `top` with patterns 
+
 ### v1.0.7
 
 - fixed `distributionOfTokens`
+- added Numpy column in dataframe
 
 ### v1.0.6
 

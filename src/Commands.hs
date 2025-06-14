@@ -19,6 +19,7 @@ import qualified Data.HashSet as Set
 import qualified Data.Massiv.Array as MA
 import Data.List ( nub, sortOn )
 import Data.List.Split ( splitOn )
+import Control.Lens (over)
 
 import Data.SRTree
 import Data.SRTree.Datasets
@@ -53,6 +54,7 @@ import Debug.Trace
 data Command  = Top Int Filter Criteria PatStr
               | Distribution FilterDist (Maybe Limit) CriteriaDist Int Int
               | DistTokens Int
+              | Modular Int FilterDist Criteria
               -- below these will not be a parsable command
               | Report EClassId ArgOpt
               | Optimize EClassId Int ArgOpt
@@ -64,6 +66,7 @@ data Command  = Top Int Filter Criteria PatStr
               | Save String
               | Load String
               | Import String Distribution String Bool
+              | EqSatStep ArgOpt
 
 type Filter = EClass -> Bool -- pattern?
 type FilterDist = Int -> Bool
@@ -120,6 +123,16 @@ parseDist = do filters' <- many' parseFilterDist
                              Nothing -> 1000
                              Just t  -> t
                pure $ Distribution (getAll . mconcat filters) limit by least top 
+
+parseModular = do n <- decimal
+                  stripSp
+                  filters' <- many' parseFilterDist
+                  let filters = if null filters'
+                                  then [(\sz -> All $ sz <= 10)]
+                                  else filters'
+                  stripSp
+                  by'     <- fromMaybe ByFitness . listToMaybe <$> many' parseCriteria
+                  pure $ Modular n (getAll . mconcat filters) by'
 
 parseLeast = stringCI "with at least " >> decimal 
 parseTopDist = stringCI "from top " >> decimal 
@@ -214,8 +227,10 @@ run (Top n filters criteria withPat) = do
         ecs  <- Prelude.mapM canonical ecs'
                           >>= removeNotTrivial (lenPat pat)
                           >>= getParents isParents filters
-
-        ids  <- getFun n filters (nub $ ecs <> ecs')
+        let ecsSet = IntSet.fromList ecs
+            -- ecsSet' = IntSet.fromList ecs'
+            -- allSet = ecsSet -- <> ecsSet'
+        ids  <- getFun n filters ecs -- (IntSet.toList ecsSet) -- (nub $ ecs <> ecs')
         pure . MultiExprs $ reverse (nub ids)
         -- printSimpleMultiExprs isCLI (reverse $ nub ids)
 
@@ -244,7 +259,35 @@ run (Distribution pSz mLimit by least top) = do
                    allPats)
                    -}
 
-run (Report eid (dist, trainData, testData)) = pure . SingleExpr $ eid -- printExpr isCLI trainData testData dist eid
+run (Modular n pSz criteria) = do
+  let getFun = if criteria == ByFitness then getTopFitEClassIn else getTopDLEClassIn
+  evaluated <- getAllEvaluatedEClasses
+  ecm <- forM evaluated $ \ec -> do m <- extractEClassList ec
+                                    hasMinSz <- isSz m
+                                    pure (ec, hasMinSz)
+  ids  <- getFun n (const True) $ Prelude.map fst $ Prelude.filter snd ecm
+  pure . MultiExprs $ reverse (nub ids)
+  where
+    isSz m  = do let ecs = Prelude.map fst . IntMap.toList $ IntMap.filter (>1) m
+                 szs <- forM ecs getSize
+                 pure $ any pSz szs
+    extractEClassList :: Monad m => EClassId -> EGraphST m (IntMap.IntMap Int)
+    extractEClassList ec' = do
+      ec   <- canonical ec'
+      best <- gets (_best . _info . (IntMap.! ec) . _eClass)
+      mec_b <- fmap (`IntMap.singleton` 1) <$>  gets ((Map.!? best) . _eNodeToEClass)
+      case mec_b of
+        Nothing   -> pure IntMap.empty
+        Just ec_b -> case best of
+                      Uni _ t   -> do m <- extractEClassList t
+                                      pure $ IntMap.unionWith (+) ec_b m
+                      Bin _ l r -> do m1 <- extractEClassList l
+                                      m2 <- extractEClassList r
+                                      pure $ IntMap.unionsWith (+) [ec_b, m1, m2]
+                      _         -> pure ec_b
+
+run (Report eid (dist, trainData, testData)) = do eid' <- canonical eid
+                                                  pure . SingleExpr $ eid' -- printExpr isCLI trainData testData dist eid
 
 run (Optimize eid nIters (dist, trainDatas, testData)) = do -- dist trainData testData
    t <- relabelParams <$> getBestExpr eid
@@ -317,6 +360,11 @@ run (DistTokens n) = do
 run (ExtractPat eid) = do
   pats <- getAllPatterns (const True) eid
   pure . Counts $ Prelude.map (\(p, c) -> (p, (c, 0))) $ Map.toList pats
+
+run (EqSatStep dataInfo) = do forM rewrites $ \r -> runEqSat myCost [r] 5 >> refitChanged dataInfo
+                              pure NoPrint
+-- dataInfo = (dist, trainDatas, testData)
+--  runEqSat myCost rewrites 1
 
 -- * auxiliary functions
 importCSV :: Distribution -> String -> String -> Bool -> MyEGraph ()
@@ -508,3 +556,15 @@ removeNotTrivial n (ec:ecs) = do
   b <- isNotTrivial n ec
   ecs' <- removeNotTrivial n ecs
   pure $ if b then (ec:ecs') else ecs'
+
+refitChanged (dist, trainDatas, testData) = do
+  ids <- gets (_refits . _eDB) >>= Prelude.mapM canonical . Set.toList >>= pure . nub
+  modify' $ over (eDB . refits) (const Set.empty)
+  forM_ ids $ \ec -> do t <- relabelParams <$> getBestExpr ec
+                        let dataTrainsVals = Prelude.zip trainDatas testData
+                        response <- forM dataTrainsVals $ \(dt, dv) -> fitnessFunRep 100 dist dt t
+                        let f = Prelude.minimum (Prelude.map fst response)
+                            thetas = Prelude.map snd response
+                        insertFitness ec f thetas
+                        let mdl_train  = Prelude.maximum $ Prelude.map (\(theta, (x, y, mYErr)) -> mdl dist mYErr x y theta t) $ Prelude.zip thetas trainDatas
+                        insertDL ec mdl_train

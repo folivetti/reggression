@@ -1,0 +1,100 @@
+modularity 5 with size > 5
+report 200150
+top 5
+eqsat a
+report 200150
+insert log(exp(x1))
+report 200150
+eqsat a
+insert log(exp(x1))
+report 200150
+eqsat a
+insert log(exp(x1))
+top 5 matching 2 * v0
+top 5 matching v0 + v0
+top 5
+eqsat a
+eqsat a
+eqsat a
+eqsat a
+top 5
+eqsat a
+top 5
+top 5
+eqsat a
+eqsat a
+optimize 200150
+eqsat a
+eqsat a
+eqsat a
+eqsat a
+eqsat a
+eqsat a
+eqsat a
+eqsat a
+eqsat a
+optimize 200150
+report 200150
+report 200150
+eqsat a
+insert log(exp(x1))
+insert log(exp(x1))
+insert log(exp(x1))
+insert log(exp(x1))
+insert log(exp(x1))
+insert log(exp(x1))
+insert log(exp(x1))
+insert log(exp(x1))
+top 5
+eqsat a
+top 5
+insert log(exp(x1))
+report 200150
+eqsat a
+report 200150
+insert log(exp(x1))
+top 5
+eqsat a
+eqsat a
+eqsat a
+eqsat a
+eqsat a
+top 5
+top 5
+eqsat a
+eqsat a
+eqsat a
+eqsat a
+eqsat a
+eqsat a
+eqsat a
+eqsat
+top 5
+top 5
+modularity 5 with size > 5
+modularity 5 with size > 4
+modularity 5 with size > 3
+modularity 5 with size > 2
+modularity 5 with size > 1
+modularity 5 with size > 1
+modularity 5 with size > 1
+help
+help modularity
+modularity 5 with size > 1
+top 5 with size <= 10 matching v0 |**| (v1 + v2)
+top 5 with size <= 10 matching (v0 |**| v1) + v2
+top 5 with size <= 10 matching v0 |**| v1 + v2
+top 5 with size <= 10 not matching v0 * v1 + v2
+top 5 with size <= 10 not matching v0 |**| v1 + v2
+top 5 with size <= 10 not matching v0 |**| v1 + v2
+top 5 with size <= 10 not matching v0 |**| v1 + v2
+top 5 with size <= 10 not matching v0 |**| v1 + x0
+top 5 with size <= 10 not matching v0 |**| v1 + t0
+top 5 with size <= 10 not matching v0 |**| v1 + t0
+top 5 with size <= 10 not matching abs(v0) ^ v1
+top 5 with size <= 10 not matching v0 |^| v1
+top 5 with size <= 10 not matching v0 |**| v1
+top 5 not matching v0 |**| v1
+top 5 matching v0 |**| v1
+top 5 matching v0 |**| v1
+top 5 matching v0 |**| v1

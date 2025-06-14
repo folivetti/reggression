@@ -18,7 +18,7 @@ from ._binding import (
     unsafe_hs_reggression_exit,
 )
 
-VERSION: str = "1.0.7"
+VERSION: str = "1.0.8"
 
 
 _hs_rts_init: bool = False
@@ -244,6 +244,33 @@ class Reggression():
         filters_str = " ".join([f"with {f}" for f in filters])
         query = f"distribution {filters_str} limited at {limitedAt} {'dsc' if dsc else 'asc'} {'by fitness' if byFitness else ''} with at least {atLeast} from top {fromTop}"
         return self.runQuery(query)
+    def modularity(self, n, filters=["> 1"], byFitness=True):
+        ''' Returns the top-N equations presenting repeated patterns with size defined by filters.
+
+        Parameters
+        ----------
+
+        n : int
+            Number of top equations to return.
+
+        filters : list[str], default=[]
+            A list of filters limiting the size of the pattern
+            following the format "size op number"
+            where op is one of <,<=,>,>=,=
+            E.g., ["size < 10", "parameters > 2", "cost=5"]
+
+        byFitness : bool, default=True
+            Whether to sort the patterns by fitness or frequency of occurrence
+        '''
+        if not isinstance(n, int):
+            raise TypeError('n must be an int')
+        if not isinstance(byFitness, bool):
+            raise TypeError('byFitness must be a boolean')
+
+        filters_str = " ".join([f"with size {f}" for f in filters])
+        query = f"modularity {n} {filters_str} {'by fitness' if byFitness else ''}"
+        print(query)
+        return self.runQuery(query)
     def countPattern(self, pattern):
         ''' Count the frequency of a certain pattern
 
@@ -273,6 +300,13 @@ class Reggression():
             E-class id of the e-class
         '''
         return self.runQuery(f"optimize {n}")
+    def eqsat(self):
+        ''' run 5 steps of equality saturation
+        sequentially for each rule (see https://github.com/folivetti/srtree/blob/main/src/Algorithm/EqSat/Simplify.hs)
+        Note: if the e-graph is large, this will take some seconds. This will not ensure saturation as it will run each rule
+        sequentially.
+        '''
+        return self.runQuery("eqsat 0")
     def subtrees(self, n):
         ''' Return the subtrees of e-class n
 
@@ -299,7 +333,12 @@ class Reggression():
         byFitness : bool, default=True
             Whether the first objective is fitness or description length
         '''
-        return self.runQuery(f"pareto {'by fitness' if byFitness else 'by dl'}")
+        front = self.runQuery(f"pareto {'by fitness' if byFitness else 'by dl'}")
+        col = 'Fitness' if byFitness else 'DL'
+        previous_values = front[col].shift(1)
+        rows_to_remove = previous_values < front[col]
+        return front[~rows_to_remove]
+
     def extractPattern(self, eid):
         ''' Returns the patterns and counts of matches for a single expression
 
