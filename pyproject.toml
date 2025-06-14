@@ -80,7 +80,8 @@ skip = [
 ]
 manylinux-aarch64-image = "folivetti/manylinux_2_28_ghc9121_aarch64"
 manylinux-i686-image = "folivetti/manylinux2014_ghc9121_i686"
-manylinux-x86_64-image = "folivetti/manylinux2014_ghc9121_x86_64"
+manylinux-x86_64-image = "folivetti/manylinux_2_28_ghc9121_x86_64"
+# manylinux-x86_64-image = "folivetti/manylinux2014_ghc9121_x86_64"
 musllinux-x86_64-image = "folivetti/musllinux_1_1_ghc9121_x86_64"
 
 [tool.cibuildwheel.windows]
