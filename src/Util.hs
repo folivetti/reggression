@@ -103,8 +103,8 @@ mvFun fun thetas datasets = Prelude.map (\(theta, (x,y,e)) -> fun x y e theta)
 
 bold s = formatted (setSGRCode [SetConsoleIntensity BoldIntensity]) (plain s) (setSGRCode [Reset])
 
-printExpr :: [DataSet] -> [DataSet] -> Distribution -> EClassId -> MyEGraph String
-printExpr dataTrain dataTest distribution ec = do
+printExpr :: [String] -> [DataSet] -> [DataSet] -> Distribution -> EClassId -> MyEGraph String
+printExpr varnames dataTrain dataTest distribution ec = do
         thetas <- getTheta ec
 
         bestExpr <- getBestExpr ec
@@ -128,10 +128,11 @@ printExpr dataTrain dataTest distribution ec = do
             mdl_trains  = intercalate "; " $ mvFun mdlMV thetas dataTrain
             mdl_tes     = intercalate "; " $ mvFun mdlMV thetas dataTest
             thetaStr    = intercalate "; " $ Prelude.map (intercalate ", " . Prelude.map show . MA.toList) thetas
+            showExprFun = if null varnames then showExpr else showExprWithVars varnames
         insertDL ec $ Prelude.maximum $ Prelude.map (\(theta, (x, y, mYerr)) -> mdl distribution mYerr x y theta best') $ Prelude.zip thetas dataTrain
 
         pure $ "Info,Training,Test\n"
-               <> "Expr," <> showExpr best' <> ",\n"
+               <> "Expr," <> showExprFun best' <> ",\n"
                <> "Numpy,\"" <> showPython best' <> "\",\n"
                <> "Nodes," <> show (countNodes $ convertProtectedOps best') <> ",\n"
                <> "params," <>  thetaStr <> ",\n"
@@ -183,14 +184,17 @@ printExprCLI dataTrain dataTest distribution ec = do
             headerReport = titlesH $ Prelude.map bold ["Metric", "Training", "Test"]
         io . putStrLn $ tableString (columnHeaderTableS columnsReport unicodeS headerReport rows)
 
-printsimpleExpr eid = do
+printsimpleExpr varnames eid m = do
    let showFun = show
    t   <- relabelParams <$> getBestExpr eid
+   mt   <- showModular varnames m eid True
+   mts  <- showModules varnames m True
    fit <- getFitness eid
    sz  <- getSize eid
    p   <- getTheta eid
    dl  <- getDL eid
-   let fit' = case fit of
+   let eq = "\\begin{align}" <> intercalate " \\\\ " (mt:mts) <> "\\end{align}"
+       fit' = case fit of
                 Nothing -> "NA"
                 Just f  -> showFun f
        p' = case p of
@@ -199,16 +203,19 @@ printsimpleExpr eid = do
        dl' = case dl of
               Nothing -> "NA"
               Just d  -> showFun d
-   pure $ intercalate "," [show eid, showExpr t, "\"" <> showPython t <> "\"", fit', "\"" <> p' <> "\"", show sz, dl']
+   pure $ intercalate "," [show eid, showExpr t, "\"" <> showPython t <> "\"", "\"" <> eq <> "\"", fit', "\"" <> p' <> "\"", show sz, dl']
 
-printsimpleExprCLI eid = do
+printsimpleExprCLI eid m = do
    let showFun = printf "%.4e"
    t   <- relabelParams <$> getBestExpr eid
+   mt   <- showModular [] m eid True
+   mts  <- showModules [] m True
    fit <- getFitness eid
    sz  <- getSize eid
    p   <- getTheta eid
    dl  <- getDL eid
-   let fit' = case fit of
+   let eq = intercalate "\n" (mt:mts)
+       fit' = case fit of
                 Nothing -> "NA"
                 Just f  -> showFun f
        p' = case p of
@@ -217,7 +224,7 @@ printsimpleExprCLI eid = do
        dl' = case dl of
               Nothing -> "NA"
               Just d  -> showFun d
-   pure $ colsAllG center [[show eid], justifyText 50 $ showExpr t, [fit'], justifyText 50 p', [show sz], [dl']]
+   pure $ colsAllG center [[show eid], justifyText 50 $ showExpr t, [fit'], justifyText 50 eq, justifyText 50 p', [show sz], [dl']]
 
 printCounts (pat, (cnt, avgfit)) = do
   let spat = showPat pat
@@ -241,12 +248,12 @@ printCountsCLI (pat, (cnt, avgfit)) = do
     showPat (Fixed (Uni f t)) = concat [show f, "(", showPat t, ")"]
     showPat (VarPat ix) = 'v' : show (fromEnum ix-65)
 
-printSimpleMultiExprs eids =
-  do rows <- forM (nub eids) printsimpleExpr
+printSimpleMultiExprs varnames eids =
+  do rows <- forM (nub eids) (uncurry (printsimpleExpr varnames))
      pure . intercalate "\n" $ (headerSimple:rows)
 
 printSimpleMultiExprsCLI eids =
-  do rows <- forM (nub eids) printsimpleExprCLI
+  do rows <- forM (nub eids) (uncurry printsimpleExprCLI)
      io.putStrLn $ tableString (columnHeaderTableS columns unicodeS headerSimpleCLI rows)
 
 printMultiCounts cnts =
@@ -258,14 +265,113 @@ printMultiCountsCLI cnts =
      io.putStrLn $ tableString (columnHeaderTableS [fixedLeftCol 50, numCol, numCol] unicodeS headerCountCLI rows)
 
 
-headerSimple = intercalate "," ["Id", "Expression", "Numpy", "Fitness", "Parameters", "Size", "DL"]
+headerSimple = intercalate "," ["Id", "Expression", "Numpy", "Latex", "Fitness", "Parameters", "Size", "DL"]
 headerCount = intercalate "," ["Pattern", "Count", "AvgFit"]
 
 headerSimpleCLI :: HeaderSpec LineStyle (Formatted String)
-headerSimpleCLI = titlesH $ Prelude.map (bold) ["Id", "Expression", "Fitness", "Parameters", "Size", "DL"]
-columns = [numCol, fixedLeftCol 50, numCol, fixedLeftCol 50, numCol, numCol]
+headerSimpleCLI = titlesH $ Prelude.map (bold) ["Id", "Expression", "Fitness", "Module", "Parameters", "Size", "DL"]
+columns = [numCol, fixedLeftCol 50, numCol, fixedLeftCol 50, fixedLeftCol 50, numCol, numCol]
 headerCountCLI :: HeaderSpec LineStyle (Formatted String)
 headerCountCLI = titlesH $ Prelude.map bold ["Pattern", "Count", "Avg. Fitness"]
+
+showModules :: Monad m => [String] -> IM.IntMap (Int, Int) -> Bool -> EGraphST m [String]
+showModules varnames m latex = forM (IM.toList m) showSingleModule
+  where
+    showSingleModule (eid, (0, ix)) = do s <- showModular varnames (IM.delete eid m) eid latex
+                                         pure $ "z_{" <> show ix <> "} = " <> s
+    showSingleModule (eid, (_, ix)) = do s <- showModular varnames (IM.delete eid m) eid latex
+                                         pure $ "f_{" <> show ix <> "}(" <> (if latex then "\\theta" else "θ") <> ") = " <> s
+
+
+showModular :: Monad m => [String] -> IM.IntMap (Int, Int) -> EClassId -> Bool -> EGraphST m String
+showModular varnames mNames eid' latex = fst <$> go eid' 0
+  where
+    go id' thetaIx = do
+      eid <- canonical id'
+      let mResult = mNames IM.!? eid
+      case mResult of
+        Nothing       -> showNormal eid
+        Just (ps, ix) -> if ps  == 0
+                           then pure $ (if latex then "z_{" <> show ix <> "}" else ('z':show ix)
+                                       , thetaIx)
+                           else if ps == 1
+                                  then pure $ (if latex
+                                                then "f_{" <> show ix <> "}(" <> "\\theta_{" <> show thetaIx <> "})"
+                                                else "f" <> show ix <> "(θ" <> show thetaIx <> ")"
+                                              , thetaIx + 1)
+                                  else pure $ (if latex
+                                                then "f_{" <> show ix <> "}(" <> "\\theta_{" <> show thetaIx <> "\\ldots" <> show (thetaIx + ps - 1) <> "}" <> ")"
+                                                else "f" <> show ix <> "(" <> "θ(" <> show thetaIx <> ".." <> show (thetaIx + ps - 1) <> ")"
+                                            , thetaIx + ps)
+        where
+          showLower x = Prelude.map toLower $ show x
+          latexify cs = go cs 0
+            where
+              go []       n  = Prelude.replicate n '}'
+              go ('_':cs) n  = '_' : '{' : go cs (n+1)
+              go (c:cs)   n  = c : go cs n
+
+          showVar ix = if latex
+                         then if null varnames then ("x_{" <> show ix <> "}") else latexify (varnames !! ix)
+                         else if null varnames then ("x" <> show ix) else varnames !! ix
+          showParam ix = if latex
+                            then "\\theta_{" <> show ix <> "}"
+                            else ('θ':show ix)
+          showFun g t =
+            case g of
+              Id -> t
+              Abs -> if latex
+                        then "\\left|" <> t <> "\\right|"
+                        else "|" <> t <> "|"
+              Sqrt -> if latex
+                         then "\\sqrt{" <> t <> "}"
+                         else "sqrt(" <> t <> ")"
+              SqrtAbs -> if latex
+                            then "\\sqrt{\\left|" <> t <> "\\right|}"
+                            else "sqrtabs(" <> t <> ")"
+              Cbrt    -> t <> if latex then "^{\\frac{1}{3}}" else "^(1/3)"
+              Square  -> t <> "^2"
+              Cube    -> t <> "^3"
+              LogAbs  -> if latex
+                            then "\\log{(\\left|" <> t <> "\\right|)}"
+                            else "log(" <> t <> ")"
+              Exp     -> if latex
+                            then "e^{" <> t <> "}"
+                            else "exp(" <> t <> ")"
+              Recip   -> if latex
+                            then "\\frac{1}{" <> t <> "}"
+                            else "(1/" <> t <> ")"
+              _       -> if latex
+                            then "\\operatorname{" <> showLower g <> "}(" <> t <> ")"
+                            else showLower g <> "(" <> t <> ")"
+          showOp op l r =
+            case op of
+              Add       -> if latex
+                              then "\\left(" <> l <> " + " <> r <> "\\right)"
+                              else "(" <> l <> ") + (" <> r <> ")"
+              Sub       -> if latex
+                              then "\\left(" <> l <> " - " <> r <> "\\right)"
+                              else "(" <> l <> ") - (" <> r <> ")"
+              Mul       -> if latex
+                              then "\\left(" <> l <> " \\cdot " <> r <> "\\right)"
+                              else "(" <> l <> ") * (" <> r <> ")"
+              Div       -> if latex then "\\frac{" <> l <> "}{" <> r <> "}" else "(" <> l <> ")/(" <> r <> ")"
+              Power     -> if latex then "{" <> l <> "^{" <> r <> "}}" else "(" <> l <> ")^(" <> r <> ")"
+              PowerAbs  -> if latex then "{\\left|" <> l <> "\\right|^{" <> r <> "}}" else "(|" <> l <> "|)^(" <> r <> ")"
+              AQ        -> if latex then "\\frac{" <> l <> "}{\\sqrt{1+" <> r <> "^2}}" else "(" <> l <> "/sqrt(1 + " <> r <> "^2))"
+          showNormal ec' =
+            do ec <- canonical ec'
+               best <- gets (_best . _info . (IM.! ec) . _eClass) >>= canonize
+               case best of
+                  Var   ix -> pure (showVar ix, thetaIx)
+                  Param ix -> pure (showParam thetaIx, thetaIx + 1)
+                  Const  x -> pure (show x, thetaIx)
+                  Uni g  t -> do (t', thetaIx') <- go t thetaIx
+                                 pure (showFun g t', thetaIx')
+                  Bin op l r -> do (l', thetaIx') <- go l thetaIx
+                                   (r', thetaIx'') <- go r thetaIx'
+                                   pure (showOp op l' r', thetaIx'')
+
 
 
 fillDL dist datasets = do

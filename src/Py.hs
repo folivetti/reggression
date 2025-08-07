@@ -74,100 +74,100 @@ data Args = Args
 egraph :: IO a -> MyEGraph a
 egraph = Control.Monad.State.Strict.lift
 
-printFun :: [DataSet] -> [DataSet] -> Distribution -> PrintResults -> MyEGraph String 
-printFun _          _         _    (MultiExprs eids) = printSimpleMultiExprs eids
-printFun datatrains datatests loss (SingleExpr eid)  = printExpr datatrains datatests loss eid 
-printFun _          _         _    (Counts pats)     = printMultiCounts pats
-printFun _          _         _    (SimpleStr str)   = pure str 
-printFun _          _         _    NoPrint           = pure ""
+printFun :: [String] -> [DataSet] -> [DataSet] -> Distribution -> PrintResults -> MyEGraph String
+printFun varnames _          _         _    (MultiExprs eids) = printSimpleMultiExprs varnames eids
+printFun varnames datatrains datatests loss (SingleExpr eid)  = printExpr varnames datatrains datatests loss eid
+printFun varnames _          _         _    (Counts pats)     = printMultiCounts pats
+printFun varnames _          _         _    (SimpleStr str)   = pure str
+printFun varnames _          _         _    NoPrint           = pure ""
 
 
-runIfRight cmd = case cmd of
-                    Left err -> pure $ "wrong command format."
-                    Right c  -> run c >>= printFun [] [] Gaussian 
+runIfRight varnames cmd = case cmd of
+                            Left err -> pure $ "wrong command format."
+                            Right c  -> run c >>= printFun varnames [] [] Gaussian
 
 --topCmd :: [String] -> Repl ()
-topCmd []    = helpCmd ["top"]
-topCmd args  = do
+topCmd varnames []    = helpCmd ["top"]
+topCmd varnames args  = do
   let cmd = parseCmd parseTop (B.pack $ unwords args)
-  runIfRight cmd
+  runIfRight varnames cmd
 
 --distCmd :: [String] -> Repl ()
-distCmd []   = helpCmd ["distribution"]
-distCmd args = do
+distCmd varnames []   = helpCmd ["distribution"]
+distCmd varnames args = do
   let cmd = parseCmd parseDist (B.pack $ unwords args)
-  runIfRight cmd
+  runIfRight varnames cmd
 
-modCmd []   = helpCmd ["modularity"]
-modCmd args = do
+modCmd varnames []   = helpCmd ["modularity"]
+modCmd varnames args = do
   let cmd = parseCmd parseModular (B.pack $ unwords args)
-  runIfRight cmd
+  runIfRight varnames cmd
 
 --reportCmd :: Distribution -> [DataSet] -> [DataSet] -> [String] -> Repl ()
-reportCmd _ _ _ [] = helpCmd ["report"]
-reportCmd dist trainData testData args =
+reportCmd varnames _ _ _ [] = helpCmd ["report"]
+reportCmd varnames dist trainData testData args =
   case readMaybe @Int (head args) of
     Nothing -> pure "The id must be an integer."
-    Just n  -> run (Report n (dist, trainData, testData)) >>= printFun trainData testData dist 
+    Just n  -> run (Report n (dist, trainData, testData)) >>= printFun varnames trainData testData dist
 
 --optimizeCmd :: Distribution -> [DataSet] -> [DataSet] -> [String] -> Repl ()
-optimizeCmd _ _ _ [] = helpCmd ["optimize"]
-optimizeCmd dist trainData testData args =
+optimizeCmd varnames _ _ _ [] = helpCmd ["optimize"]
+optimizeCmd varnames dist trainData testData args =
   case readMaybe @Int (head args) of
     Nothing -> pure "The id must be an integer."
     Just n  -> do let nIters = if length args > 1 then fromMaybe 100 (readMaybe @Int (args !! 1)) else 100
-                  run (Optimize n nIters (dist, trainData, trainData)) >>= printFun trainData testData dist
+                  run (Optimize n nIters (dist, trainData, trainData)) >>= printFun varnames trainData testData dist
 
-eqSatCmd _ _ _ [] = helpCmd ["eqsat"]
-eqSatCmd dist trainData testData _ =
-  run (EqSatStep (dist, trainData, trainData)) >>= printFun trainData testData dist
+eqSatCmd varnames _ _ _ [] = helpCmd ["eqsat"]
+eqSatCmd varnames dist trainData testData _ =
+  run (EqSatStep (dist, trainData, trainData)) >>= printFun varnames trainData testData dist
 
 --subtreesCmd :: [String] -> Repl ()
-subtreesCmd [] = helpCmd ["subtrees"]
-subtreesCmd (arg:_) = case readMaybe @Int arg of
+subtreesCmd varnames [] = helpCmd ["subtrees"]
+subtreesCmd varnames (arg:_) = case readMaybe @Int arg of
                         Nothing -> pure "The argument must be an integer."
-                        Just n  -> (run (Subtrees n) >>= printFun [] [] Gaussian)
+                        Just n  -> (run (Subtrees n) >>= printFun varnames [] [] Gaussian)
 
 --insertCmd :: Distribution -> [DataSet] -> [DataSet] -> [String] -> Repl ()
-insertCmd dist trainData testData [] = helpCmd ["insert"]
-insertCmd dist trainData testData args = do
+insertCmd varnames dist trainData testData [] = helpCmd ["insert"]
+insertCmd varnames dist trainData testData args = do
   let etree = parseSR TIR "" False $ B.pack (unwords args)
   case etree of
     Left _     -> pure $ "no parse for " <> unwords args
     Right tree -> do ec <- fromTree myCost tree
-                     (run (Optimize ec 100 (dist, trainData, trainData)) >>= printFun trainData testData dist)
+                     (run (Optimize ec 100 (dist, trainData, trainData)) >>= printFun varnames trainData testData dist)
 
 --paretoCmd :: [String] -> Repl ()
-paretoCmd []   = run (Pareto ByFitness) >>= printFun [] [] Gaussian
-paretoCmd args = case (Prelude.map toLower $ unwords args) of
-                    "by fitness" -> (run (Pareto ByFitness ) >>= printFun [] [] Gaussian)
-                    "by dl"      -> (run (Pareto ByDL) >>= printFun [] [] Gaussian)
+paretoCmd varnames []   = run (Pareto ByFitness) >>= printFun varnames [] [] Gaussian
+paretoCmd varnames args = case (Prelude.map toLower $ unwords args) of
+                    "by fitness" -> (run (Pareto ByFitness ) >>= printFun varnames [] [] Gaussian)
+                    "by dl"      -> (run (Pareto ByDL) >>= printFun varnames [] [] Gaussian)
                     _            -> helpCmd ["pareto"]
 
 --countPatCmd :: [String] -> Repl ()
-countPatCmd []   = helpCmd ["count-pattern"]
-countPatCmd args = run (CountPat (unwords args)) >>= printFun [] [] Gaussian
+countPatCmd varnames []   = helpCmd ["count-pattern"]
+countPatCmd varnames args = run (CountPat (unwords args)) >>= printFun varnames [] [] Gaussian
 
 --saveCmd :: [String] -> Repl ()
-saveCmd [] = helpCmd ["save"]
-saveCmd args = run (Save (unwords args)) >>= printFun [] [] Gaussian
+saveCmd varnames [] = helpCmd ["save"]
+saveCmd varnames args = run (Save (unwords args)) >>= printFun varnames [] [] Gaussian
 
 --loadCmd :: [String] -> Repl ()
-loadCmd [] = helpCmd ["load"]
-loadCmd args = run (Load (unwords args)) >>= printFun [] [] Gaussian
+loadCmd varnames [] = helpCmd ["load"]
+loadCmd varnames args = run (Load (unwords args)) >>= printFun varnames [] [] Gaussian
 
 --importCmd :: Distribution -> String -> [String] -> Repl ()
-importCmd dist varnames (fname:params:_) = run (Import fname dist varnames (Prelude.read params)) >>= printFun [] [] dist
-importCmd dist varnames _   = helpCmd ["import"]
+importCmd varnames dist varnames' (fname:params:_) = run (Import fname dist varnames' (Prelude.read params)) >>= printFun varnames [] [] dist
+importCmd varnames dist varnames' _   = helpCmd ["import"]
 
-distTokensCmd [] = helpCmd ["distribution-tokens"]
-distTokensCmd (arg:_) = case readMaybe arg of
-                          Just n -> run (DistTokens n) >>= printFun [] [] Gaussian
+distTokensCmd varnames [] = helpCmd ["distribution-tokens"]
+distTokensCmd varnames (arg:_) = case readMaybe arg of
+                          Just n -> run (DistTokens n) >>= printFun varnames [] [] Gaussian
                           Nothing -> helpCmd ["distribution-tokens"]
 
-extractPatCmd args = case readMaybe @Int (head args) of
+extractPatCmd varnames args = case readMaybe @Int (head args) of
     Nothing -> pure "The id must be an integer."
-    Just n  -> run (ExtractPat n) >>= printFun [] [] Gaussian
+    Just n  -> run (ExtractPat n) >>= printFun varnames [] [] Gaussian
 
 commands = ["help", "top", "report", "optimize", "eqsat", "subtrees", "insert", "count-pattern", "distribution", "modularity", "pareto", "save", "load", "import", "extract-pattern", "distribution-tokens"]
 
@@ -259,7 +259,7 @@ cmd cmdMap input = do let (cmd':args) = words input
 
 helpCmd xs = pure $ hlpMap Map.! (head xs)
 
-reggression myCmd dataset testData loss' loadFrom dumpTo parseCSV' parseParams calcDL calcFit = do
+reggression myCmd dataset testData loss' loadFrom dumpTo parseCSV' parseParams calcDL calcFit varnames = do
   let loss        = fromJust $ readMaybe loss'
       args = Args dataset testData loss dumpTo loadFrom parseCSV' parseParams calcDL calcFit
 
@@ -269,7 +269,7 @@ reggression myCmd dataset testData loss' loadFrom dumpTo parseCSV' parseParams c
   let dataTrainsWP = Prelude.map (\((a, b, _, _), (c, _), v, _) -> ((a,b,c), v)) dataTrainsWP'
 
   let dataTrains = Prelude.map fst dataTrainsWP
-      varnames   = snd . head $ dataTrainsWP
+      varnames'  = snd . head $ dataTrainsWP
 
   dataTests  <- if null (_testData args)
                   then pure dataTrains
@@ -279,25 +279,25 @@ reggression myCmd dataset testData loss' loadFrom dumpTo parseCSV' parseParams c
                         bs <- BS.hGetContents h
                         BS.length bs `seq` pure (decode bs)
            else if (not. null) (_parseCSV args)
-                 then parseCSV (_loss args) (_parseCSV args) varnames (_parseParams args)
+                 then parseCSV (_loss args) (_parseCSV args) varnames' (_parseParams args)
                  else pure emptyGraph
   let loss = _loss args
       funs = [ helpCmd
-             , topCmd
-             , reportCmd loss dataTrains dataTests
-             , optimizeCmd loss dataTrains dataTests
-             , eqSatCmd loss dataTrains dataTests
-             , subtreesCmd
-             , insertCmd loss dataTrains dataTests
-             , countPatCmd
-             , distCmd
-             , modCmd
-             , paretoCmd
-             , saveCmd
-             , loadCmd
-             , importCmd loss varnames
-             , extractPatCmd
-             , distTokensCmd
+             , topCmd varnames
+             , reportCmd varnames loss dataTrains dataTests
+             , optimizeCmd varnames loss dataTrains dataTests
+             , eqSatCmd varnames loss dataTrains dataTests
+             , subtreesCmd varnames
+             , insertCmd varnames loss dataTrains dataTests
+             , countPatCmd varnames
+             , distCmd varnames
+             , modCmd varnames
+             , paretoCmd varnames
+             , saveCmd varnames
+             , loadCmd varnames
+             , importCmd varnames loss varnames'
+             , extractPatCmd varnames
+             , distTokensCmd varnames
              ]
       cmdMap = Map.fromList $ Prelude.zip commands funs
 

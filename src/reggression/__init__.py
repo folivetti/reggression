@@ -52,9 +52,9 @@ def main(args: List[str] = []) -> int:
     with hs_rts_init(args):
         return unsafe_hs_reggression_main()
 
-def reggression_run(myCmd : str, dataset : str, testData : str, loss : str, loadFrom : str, dumpTo : str, parseCSV : str, parseParams : int, calcDL : int, calcFit : int) -> str:
+def reggression_run(myCmd : str, dataset : str, testData : str, loss : str, loadFrom : str, dumpTo : str, parseCSV : str, parseParams : int, calcDL : int, calcFit : int, varnames : list) -> str:
     with hs_rts_init():
-        return unsafe_hs_reggression_run(myCmd, dataset, testData, loss, loadFrom, dumpTo, parseCSV, parseParams, calcDL, calcFit)
+        return unsafe_hs_reggression_run(myCmd, dataset, testData, loss, loadFrom, dumpTo, parseCSV, parseParams, calcDL, calcFit, varnames)
 
 class Reggression():
     """ Starts up the r🥚ression engine.
@@ -104,7 +104,7 @@ class Reggression():
     >>> egg = PyReggression("data.csv", loadFrom="myData.egraph")
     >>> egg.top(10)
     """
-    def __init__(self, dataset, testData="", loss="MSE", loadFrom="", parseCSV="", parseParams=True, refit=False):
+    def __init__(self, dataset, testData="", loss="MSE", loadFrom="", parseCSV="", parseParams=True, refit=False, simpleOutput=False):
         losses = ["MSE", "Gaussian", "Bernoulli", "Poisson"]
         if loss not in losses:
             raise ValueError('loss must be one of ', losses)
@@ -127,16 +127,36 @@ class Reggression():
         self.parseCSV = parseCSV
         self.parseParams = int(parseParams)
         self.refit = refit
+        self.simpleOutput = simpleOutput
+
+        df = pd.read_csv(dataset)
+        self.varnames = ','.join(df.columns)
 
         self.temp_file = tempfile.NamedTemporaryFile(mode='w+', newline='', delete=False,  dir=os.getcwd(), suffix='.egraph')
         self.tempname = self.temp_file.name
         self.temp_file.close()
         print("Calculating DL...")
-        reggression_run("top 10", self.dataset, self.testData, self.loss, self.loadFrom, self.tempname, self.parseCSV, self.parseParams, 1, self.refit)
+        reggression_run("top 10", self.dataset, self.testData, self.loss, self.loadFrom, self.tempname, self.parseCSV, self.parseParams, 1, self.refit, self.varnames)
         print("Welcome to r🥚ression")
     def __del__(self):
         ''' remove temporary e-graph file before ending the program '''
         os.remove(self.tempname)
+    def set_simple_output(self, b):
+        '''
+        Sets to simple output when printing a dataframe.
+        This will select only the e-class id, latex, fitness columns.
+
+        Parameters
+        ----------
+
+        b : bool
+            Whether to set simple output
+        '''
+        self.simpleOutput = b
+
+    def set_varnames(self, names):
+        self.varnames = ','.join(names)
+
     def runQuery(self, query, df=True):
         '''  Runs a query.
 
@@ -149,12 +169,15 @@ class Reggression():
         df : bool, default=True
             Whether the query returns a DataFrame.
         '''
-        csv_data = reggression_run(query, self.dataset, self.testData, self.loss, self.tempname, self.tempname, self.parseCSV, self.parseParams, 0, 0)
+        csv_data = reggression_run(query, self.dataset, self.testData, self.loss, self.tempname, self.tempname, self.parseCSV, self.parseParams, 0, 0, self.varnames)
         if df and len(csv_data) > 0:
             csv_io = StringIO(csv_data.strip())
             self.results = pd.read_csv(csv_io, header=0)
         else:
             self.results = pd.DataFrame() if df else csv_data
+        cols = self.results.columns if df else []
+        if self.simpleOutput and all(['Id' in cols, 'Latex' in cols, 'Fitness' in cols]):
+            return self.results[['Id', 'Latex', 'Fitness']]
         return self.results
 
     def top(self, n=5, filters=[], criteria="fitness", pattern="", isRoot=False, negate=False):
@@ -269,7 +292,6 @@ class Reggression():
 
         filters_str = " ".join([f"with size {f}" for f in filters])
         query = f"modularity {n} {filters_str} {'by fitness' if byFitness else ''}"
-        print(query)
         return self.runQuery(query)
     def countPattern(self, pattern):
         ''' Count the frequency of a certain pattern
@@ -335,9 +357,8 @@ class Reggression():
         '''
         front = self.runQuery(f"pareto {'by fitness' if byFitness else 'by dl'}")
         col = 'Fitness' if byFitness else 'DL'
-        previous_values = front[col].shift(1)
-        rows_to_remove = previous_values < front[col]
-        return front[~rows_to_remove]
+
+        return front[front[col] >= front[col].cummax()]
 
     def extractPattern(self, eid):
         ''' Returns the patterns and counts of matches for a single expression

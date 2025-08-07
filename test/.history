@@ -1,3 +1,14 @@
+distribution with size < 10 limited at 20
+distribution with size < 10 limited at 10
+optimize 3
+top 5
+distribution with size < 10 limited at 10
+insert (x0 + t0) + x0
+distribution with size < 10 limited at 10
+distribution
+top 5
+insert x0 + x0
+top 5
 modularity 5 with size > 5
 report 200150
 top 5
@@ -87,14 +98,3 @@ top 5 with size <= 10 matching v0 |**| v1 + v2
 top 5 with size <= 10 not matching v0 * v1 + v2
 top 5 with size <= 10 not matching v0 |**| v1 + v2
 top 5 with size <= 10 not matching v0 |**| v1 + v2
-top 5 with size <= 10 not matching v0 |**| v1 + v2
-top 5 with size <= 10 not matching v0 |**| v1 + x0
-top 5 with size <= 10 not matching v0 |**| v1 + t0
-top 5 with size <= 10 not matching v0 |**| v1 + t0
-top 5 with size <= 10 not matching abs(v0) ^ v1
-top 5 with size <= 10 not matching v0 |^| v1
-top 5 with size <= 10 not matching v0 |**| v1
-top 5 not matching v0 |**| v1
-top 5 matching v0 |**| v1
-top 5 matching v0 |**| v1
-top 5 matching v0 |**| v1

@@ -67,6 +67,7 @@ data Command  = Top Int Filter Criteria PatStr
               | Load String
               | Import String Distribution String Bool
               | EqSatStep ArgOpt
+              | Clean Int
 
 type Filter = EClass -> Bool -- pattern?
 type FilterDist = Int -> Bool
@@ -201,7 +202,7 @@ putEOL :: B.ByteString -> B.ByteString
 putEOL bs | B.last bs == '\n' = bs
           | otherwise         = B.snoc bs '\n'
 
-data PrintResults = MultiExprs [EClassId] | SingleExpr EClassId | Counts [(Pattern, (Int, Double))] | SimpleStr String | NoPrint
+data PrintResults = MultiExprs [(EClassId, IntMap.IntMap (Int, Int))] | SingleExpr EClassId | Counts [(Pattern, (Int, Double))] | SimpleStr String | NoPrint
                   deriving (Show)
 
 -- running
@@ -209,7 +210,7 @@ run :: Command -> MyEGraph PrintResults
 run (Top n filters criteria NoPat) = do
    let getFun = if criteria == ByFitness then getTopFitEClassThat else getTopDLEClassThat
    ids <- getFun n filters
-   pure $ MultiExprs $ reverse ids
+   pure $ MultiExprs $ [(i, IntMap.empty) | i <- reverse ids]
    -- printSimpleMultiExprs (reverse ids)
 
 run (Top n filters criteria withPat) = do
@@ -231,7 +232,7 @@ run (Top n filters criteria withPat) = do
             -- ecsSet' = IntSet.fromList ecs'
             -- allSet = ecsSet -- <> ecsSet'
         ids  <- getFun n filters ecs -- (IntSet.toList ecsSet) -- (nub $ ecs <> ecs')
-        pure . MultiExprs $ reverse (nub ids)
+        pure . MultiExprs $ [(i, IntMap.empty) | i <- reverse (nub ids)]
         -- printSimpleMultiExprs isCLI (reverse $ nub ids)
 
 run (Distribution pSz mLimit by least top) = do
@@ -262,29 +263,16 @@ run (Distribution pSz mLimit by least top) = do
 run (Modular n pSz criteria) = do
   let getFun = if criteria == ByFitness then getTopFitEClassIn else getTopDLEClassIn
   evaluated <- getAllEvaluatedEClasses
-  ecm <- forM evaluated $ \ec -> do m <- extractEClassList ec
-                                    hasMinSz <- isSz m
-                                    pure (ec, hasMinSz)
-  ids  <- getFun n (const True) $ Prelude.map fst $ Prelude.filter snd ecm
-  pure . MultiExprs $ reverse (nub ids)
-  where
-    isSz m  = do let ecs = Prelude.map fst . IntMap.toList $ IntMap.filter (>1) m
-                 szs <- forM ecs getSize
-                 pure $ any pSz szs
-    extractEClassList :: Monad m => EClassId -> EGraphST m (IntMap.IntMap Int)
-    extractEClassList ec' = do
-      ec   <- canonical ec'
-      best <- gets (_best . _info . (IntMap.! ec) . _eClass)
-      mec_b <- fmap (`IntMap.singleton` 1) <$>  gets ((Map.!? best) . _eNodeToEClass)
-      case mec_b of
-        Nothing   -> pure IntMap.empty
-        Just ec_b -> case best of
-                      Uni _ t   -> do m <- extractEClassList t
-                                      pure $ IntMap.unionWith (+) ec_b m
-                      Bin _ l r -> do m1 <- extractEClassList l
-                                      m2 <- extractEClassList r
-                                      pure $ IntMap.unionsWith (+) [ec_b, m1, m2]
-                      _         -> pure ec_b
+  ecm <- forM evaluated $ \ec -> do m <- mapOfNames pSz <$> extractEClassList ec
+                                    pure (ec, m)
+  ids'  <- reverse . nub <$> (getFun n (const True)
+        $ Prelude.map fst
+        $ Prelude.filter (\(ec, m) -> not $ IntMap.null m) ecm)
+  ids <- mapM canonical ids'
+  let myM = IntMap.fromList ecm
+
+  pure . MultiExprs $ [(myId, myM IntMap.! myId) | myId <- ids]
+
 
 run (Report eid (dist, trainData, testData)) = do eid' <- canonical eid
                                                   pure . SingleExpr $ eid' -- printExpr isCLI trainData testData dist eid
@@ -299,7 +287,7 @@ run (Optimize eid nIters (dist, trainDatas, testData)) = do -- dist trainData te
    insertFitness eid f thetas
    let mdl_train  = Prelude.maximum $ Prelude.map (\(theta, (x, y, mYErr)) -> mdl dist mYErr x y theta t) $ Prelude.zip thetas trainDatas
    insertDL eid mdl_train
-   pure . MultiExprs $ [eid]
+   pure . MultiExprs $ [(eid, IntMap.empty)]
    --printSimpleMultiExprs isCLI [eid]
 
 run (Insert expr argOpt) = do
@@ -313,7 +301,7 @@ run (Subtrees eid) = do
    isValid <- gets ((IntMap.member eid) . _eClass)
    if isValid
      then do ids <- getAllChildBestEClasses eid
-             pure . MultiExprs $ ids
+             pure . MultiExprs $ [(i, IntMap.empty) | i <- ids]
              --printSimpleMultiExprs isCLI ids
      else pure . SimpleStr $ "Invalid id."
 
@@ -322,7 +310,7 @@ run (Pareto crit) = do
    ecs <- case crit of
             ByFitness -> getParetoEcsUpTo 1 maxSize
             ByDL      -> getParetoDLEcsUpTo 1 maxSize
-   pure . MultiExprs $ ecs
+   pure . MultiExprs $ [(i, IntMap.empty) | i <- ecs]
    -- printSimpleMultiExprs isCLI ecs
 
 run (CountPat spat) = do
@@ -361,7 +349,7 @@ run (ExtractPat eid) = do
   pats <- getAllPatterns (const True) eid
   pure . Counts $ Prelude.map (\(p, c) -> (p, (c, 0))) $ Map.toList pats
 
-run (EqSatStep dataInfo) = do forM rewrites $ \r -> runEqSat myCost [r] 5 >> refitChanged dataInfo
+run (EqSatStep dataInfo) = do (forM rewrites $ \r -> runEqSat myCost [r] 1) >> refitChanged dataInfo
                               pure NoPrint
 -- dataInfo = (dist, trainDatas, testData)
 --  runEqSat myCost rewrites 1
@@ -568,3 +556,39 @@ refitChanged (dist, trainDatas, testData) = do
                         insertFitness ec f thetas
                         let mdl_train  = Prelude.maximum $ Prelude.map (\(theta, (x, y, mYErr)) -> mdl dist mYErr x y theta t) $ Prelude.zip thetas trainDatas
                         insertDL ec mdl_train
+
+
+mapOfNames :: (Int -> Bool) -> IntMap.IntMap (Int, Int, Int) -> IntMap.IntMap (Int, Int)
+mapOfNames maxSz m' =
+  let m = IntMap.toList $ IntMap.filter (\(cnt,ps,sz) -> cnt > 1 && maxSz sz) m'
+  in IntMap.fromList $ Prelude.zipWith (\(k, (a,b,c)) ix -> (k, (b,ix))) m [0..]
+
+extractEClassList :: Monad m => EClassId -> EGraphST m (IntMap.IntMap (Int, Int, Int))
+extractEClassList ec' = do
+  ec   <- canonical ec'
+  best <- gets (_best . _info . (IntMap.! ec) . _eClass) >>= canonize
+  mec_b <- gets ((Map.!? best) . _eNodeToEClass)
+  case mec_b of
+    Nothing   -> pure IntMap.empty
+    Just ec_b' -> do ec_b <- canonical ec_b'
+                     case best of
+                        Uni _ t   -> do m <- extractEClassList t
+                                        sm <- createSingle ec_b t t m True
+                                        pure $ IntMap.unionWith merge sm m
+                        Bin _ l r -> do m1 <- extractEClassList l
+                                        m2 <- extractEClassList r
+                                        let m = IntMap.unionWith merge m1 m2
+                                        sm <- createSingle ec_b l r m False
+                                        pure $ IntMap.unionWith merge sm m
+                        Param _   -> pure (IntMap.singleton ec_b (1, 1, 1))
+                        _         -> pure (IntMap.singleton ec_b (1, 0, 1))
+  where
+    merge (count1, ps1, sz1) (count2, ps2, sz2) = (count1+count2, ps1, sz1)
+    createSingle ec_b l' r' m uni = do
+      l <- canonical l'
+      r <- canonical r'
+      let (_, b1, sz1) = m IntMap.! l
+          (_, b2, sz2) = m IntMap.! r
+      pure $ if uni
+                then IntMap.singleton ec_b (1, b1, sz1+1)
+                else IntMap.singleton ec_b (1, b1 + b2, sz1+sz2+1)

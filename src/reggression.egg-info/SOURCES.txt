@@ -14,5 +14,6 @@ src/reggression.egg-info/dependency_links.txt
 src/reggression.egg-info/entry_points.txt
 src/reggression.egg-info/requires.txt
 src/reggression.egg-info/top_level.txt
+test/test_modularity.py
 test/test_pyreggression.py
 test/test_pyreggression_eqs.py
