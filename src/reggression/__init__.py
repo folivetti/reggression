@@ -18,7 +18,7 @@ from ._binding import (
     unsafe_hs_reggression_exit,
 )
 
-VERSION: str = "1.0.8"
+VERSION: str = "1.0.9"
 
 
 _hs_rts_init: bool = False
@@ -108,13 +108,13 @@ class Reggression():
         losses = ["MSE", "Gaussian", "Bernoulli", "Poisson"]
         if loss not in losses:
             raise ValueError('loss must be one of ', losses)
-        if len(loadFrom) == 0 and len(parseCSV) == 0:
-            raise ValueError('you must provide either a "loadFrom" or "parseCSV" value')
+        #if len(loadFrom) == 0 and len(parseCSV) == 0:
+        #    raise ValueError('you must provide either a "loadFrom" or "parseCSV" value')
         if len(dataset) == 0:
             raise ValueError('you must provide a dataset filename')
         if not os.path.isfile(dataset):
             raise ValueError('dataset does not exist')
-        if not os.path.isfile(loadFrom) and not os.path.isfile(parseCSV):
+        if (len(loadFrom) > 0 or len(parseCSV) > 0) and not os.path.isfile(loadFrom) and not os.path.isfile(parseCSV):
             raise ValueError('egraph or CSV file do not exist')
         if not isinstance(parseParams, bool):
             raise ValueError('parseParams must be a boolean')

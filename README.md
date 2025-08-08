@@ -13,6 +13,10 @@ Instructions:
 
 ## Changelog
 
+### v1.0.9
+
+- allow empty e-graph in Python wrapper
+
 ### v1.0.8 
 
 - fixed slowdown in `top` with patterns 
