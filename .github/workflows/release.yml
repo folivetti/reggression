@@ -68,6 +68,11 @@ jobs:
               plat: "macosx"
           - os:
               name: "macOS"
+              runner: "macos-13"
+              arch: "arm64"
+              plat: "macosx"
+          - os:
+              name: "macOS"
               runner: "macos-14"
               arch: "arm64"
               plat: "macosx"
