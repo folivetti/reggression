@@ -63,9 +63,14 @@ jobs:
           #    plat: "musllinux"
           - os:
               name: "macOS"
-              runner: "macos-13"
+              runner: "macos-15-intel"
               arch: "x86_64"
               plat: "macosx"
+          #- os:
+          #    name: "macOS"
+          #    runner: "macos-13"
+          #    arch: "arm64"
+          #    plat: "macosx"
           - os:
               name: "macOS"
               runner: "macos-14"
@@ -78,7 +83,7 @@ jobs:
               plat: "win"
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - # 12-02-2024:
         # Print the macOS architecture.
@@ -86,7 +91,7 @@ jobs:
         run: echo "::debug::$(uname -a)"
 
       - # Required to run job via act: https://github.com/nektos/act
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           cache: "pip"
           cache-dependency-path: "./requirements-ci.txt"
@@ -172,7 +177,7 @@ jobs:
         with:
           platforms: "386"
 
-      - uses: pypa/cibuildwheel@v3.0.0
+      - uses: pypa/cibuildwheel@v3.2.1
         with:
           output-dir: "./wheelhouse"
           config-file: "{package}/pyproject.toml"

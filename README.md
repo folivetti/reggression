@@ -147,10 +147,11 @@ Set-ExecutionPolicy Bypass -Scope Process -Force;[System.Net.ServicePointManager
 ```
 
 After the installation, run `ghcup tui` and install the latest `stack` or `cabal` together with `ghc-9.6.6` (select the items and press `i`).
-To install `srsimplify` simply run:
 
 ```bash 
-cabal install
+cabal build
+pip install -f requirements-ci.txt
+pip install .
 ```
 
 ## Python
