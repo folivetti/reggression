@@ -54,7 +54,7 @@ import Text.ParseSR (SRAlgs(..), parseSR, parsePat, Output(..), showOutput)
 import qualified Data.ByteString.Char8 as B
 import qualified Data.IntSet as IntSet
 import qualified Data.Set as SSet
-import Algorithm.EqSat.SearchSR
+import Algorithm.EqSat.SearchSR hiding (myCost)
 
 data Args = Args
   { _dataset       :: String,
@@ -128,6 +128,7 @@ printFun datatrains datatests loss (SingleExpr eid)  = printExprCLI datatrains d
 printFun _          _         _    (Counts pats)     = printMultiCountsCLI pats
 printFun _          _         _    (SimpleStr str)   = liftIO . putStrLn $ str 
 printFun _          _         _    NoPrint           = pure ()
+printFun _          _         _    (MultiTrees ts)   = printSimpleMultiTreesCLI ts
 
 runIfRight cmd = case cmd of
                     Left err -> liftIO.print $ "wrong command format."
@@ -168,8 +169,16 @@ optimizeCmd dist trainData testData args =
  
 eqSatCmd :: Distribution -> [DataSet] -> [DataSet] -> [String] -> Repl ()
 eqSatCmd _ _ _ [] = helpCmd ["eqsat"]
-eqSatCmd dist trainData testData _ =
-  egraph $ run (EqSatStep (dist, trainData, trainData)) >>= printFun trainData testData dist
+eqSatCmd dist trainData testData (arg:_) =
+  case readMaybe @Int arg of
+       Nothing -> liftIO.putStrLn $ "The argument must be an integer."
+       Just n  -> egraph $ run (EqSatStep n (dist, trainData, trainData)) >>= printFun trainData testData dist
+
+getNExprsCmd :: [String] -> Repl ()
+getNExprsCmd (arg1:arg2:_) = case  ((,) <$> readMaybe @Int arg1 <*> readMaybe @Int arg2) of
+                                  Nothing -> liftIO.putStrLn $ "Both arguments should be an integer."
+                                  Just (n,eid) -> egraph $ run (GetNExprs n eid) >>= printFun [] [] Gaussian
+getNExprsCmd _ = helpCmd ["getNExprs"]
 
 subtreesCmd :: [String] -> Repl ()
 subtreesCmd [] = helpCmd ["subtrees"]
@@ -219,7 +228,7 @@ extractPatCmd args = case readMaybe @Int (head args) of
     Nothing -> liftIO.putStrLn $ "The id must be an integer."
     Just n  -> egraph $ run (ExtractPat n) >>= printFun [] [] Gaussian
 
-commands = ["help", "top", "report", "optimize", "eqsat", "subtrees", "insert", "count-pattern", "distribution", "modularity", "pareto", "save", "load", "import", "extract-pattern", "distribution-tokens"]
+commands = ["help", "top", "report", "optimize", "eqsat", "getNExprs", "subtrees", "insert", "count-pattern", "distribution", "modularity", "pareto", "save", "load", "import", "extract-pattern", "distribution-tokens"]
 
 topHlp = "top N [FILTER...] [CRITERIA] [[not] matching [root] PATTERN] \n \
          \ \n \
@@ -287,7 +296,8 @@ hlpMap = Map.fromList $ Prelude.zip commands
                             , topHlp
                             , "report N: displays a detailed report for the expression with id N."
                             , "optimize N: (re)optimize expression with id N."
-                            , "eqsat: run a single step of equality saturation and refit any expression with changed number of parameters."
+                            , "eqsat N: run N steps of equality saturation and refit any expression with changed number of parameters."
+                            , "getNExprs N id: get N equivalent expressions rooted at id."
                             , "subtrees N: shows the subtrees for the tree rotted with id N."
                             , "insert EXPR: inserts a new expression EXPR and evaluates."
                             , countHlp
@@ -350,6 +360,7 @@ cli = do
              , reportCmd loss dataTrains dataTests
              , optimizeCmd loss dataTrains dataTests
              , eqSatCmd loss dataTrains dataTests
+             , getNExprsCmd
              , subtreesCmd
              , insertCmd loss dataTrains dataTests
              , countPatCmd

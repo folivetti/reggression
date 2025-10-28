@@ -105,6 +105,7 @@ bold s = formatted (setSGRCode [SetConsoleIntensity BoldIntensity]) (plain s) (s
 
 printExpr :: [String] -> [DataSet] -> [DataSet] -> Distribution -> EClassId -> MyEGraph String
 printExpr varnames dataTrain dataTest distribution ec = do
+        cec <- canonical ec
         thetas <- getTheta ec
 
         bestExpr <- getBestExpr ec
@@ -132,6 +133,7 @@ printExpr varnames dataTrain dataTest distribution ec = do
         insertDL ec $ Prelude.maximum $ Prelude.map (\(theta, (x, y, mYerr)) -> mdl distribution mYerr x y theta best') $ Prelude.zip thetas dataTrain
 
         pure $ "Info,Training,Test\n"
+               <> "Id," <> show cec <> ",\n"
                <> "Expr," <> showExprFun best' <> ",\n"
                <> "Numpy,\"" <> showPython best' <> "\",\n"
                <> "Nodes," <> show (countNodes $ convertProtectedOps best') <> ",\n"
@@ -226,6 +228,16 @@ printsimpleExprCLI eid m = do
               Just d  -> showFun d
    pure $ colsAllG center [[show eid], justifyText 50 $ showExpr t, [fit'], justifyText 50 eq, justifyText 50 p', [show sz], [dl']]
 
+printsimpleTree varnames t' = do
+  let t = relabelParams t'
+  ltx <- showLatexTree varnames t
+  let eq = "\\begin{align}" <> ltx <> "\\end{align}"
+  pure $ intercalate "," [showExpr t, "\"" <> showPython t <> "\"", "\"" <> eq <> "\""]
+
+printsimpleTreeCLI t' = do
+  let t = relabelParams t'
+  pure $ colsAllG center [[show 1], justifyText 50 $ showExpr t]
+
 printCounts (pat, (cnt, avgfit)) = do
   let spat = showPat pat
   pure $ intercalate "," [spat, show cnt, show avgfit]
@@ -256,6 +268,14 @@ printSimpleMultiExprsCLI eids =
   do rows <- forM (nub eids) (uncurry printsimpleExprCLI)
      io.putStrLn $ tableString (columnHeaderTableS columns unicodeS headerSimpleCLI rows)
 
+printSimpleMultiTrees varnames ts =
+  do rows <- forM ts ((printsimpleTree varnames))
+     pure $ intercalate "\n" $ (headerTrees:rows)
+
+printSimpleMultiTreesCLI ts =
+  do rows <- forM ts (printsimpleTreeCLI)
+     io.putStrLn $ tableString (columnHeaderTableS columnsT unicodeS headerTreesCLI rows)
+
 printMultiCounts cnts =
   do rows <- forM cnts printCounts
      pure . intercalate "\n" $ (headerCount:rows)
@@ -267,12 +287,16 @@ printMultiCountsCLI cnts =
 
 headerSimple = intercalate "," ["Id", "Expression", "Numpy", "Latex", "Fitness", "Parameters", "Size", "DL"]
 headerCount = intercalate "," ["Pattern", "Count", "AvgFit"]
+headerTrees = intercalate "," ["Expression", "Numpy", "Latex"]
 
 headerSimpleCLI :: HeaderSpec LineStyle (Formatted String)
 headerSimpleCLI = titlesH $ Prelude.map (bold) ["Id", "Expression", "Fitness", "Module", "Parameters", "Size", "DL"]
 columns = [numCol, fixedLeftCol 50, numCol, fixedLeftCol 50, fixedLeftCol 50, numCol, numCol]
 headerCountCLI :: HeaderSpec LineStyle (Formatted String)
 headerCountCLI = titlesH $ Prelude.map bold ["Pattern", "Count", "Avg. Fitness"]
+
+columnsT = [numCol, fixedLeftCol 50]
+headerTreesCLI = titlesH $ Prelude.map bold ["Id", "Expression"]
 
 showModules :: Monad m => [String] -> IM.IntMap (Int, Int) -> Bool -> EGraphST m [String]
 showModules varnames m latex = forM (IM.toList m) showSingleModule
@@ -372,7 +396,62 @@ showModular varnames mNames eid' latex = fst <$> go eid' 0
                                    (r', thetaIx'') <- go r thetaIx'
                                    pure (showOp op l' r', thetaIx'')
 
+showLatexTree :: Monad m => [String] -> Fix SRTree -> EGraphST m String
+showLatexTree varnames = showNormal
+  where
+    showLower x = Prelude.map toLower $ show x
+    latexify cs = go cs 0
+      where
+        go []       n  = Prelude.replicate n '}'
+        go ('_':cs) n  = '_' : '{' : go cs (n+1)
+        go (c:cs)   n  = c : go cs n
 
+    showVar ix = if null varnames then ("x_{" <> show ix <> "}") else latexify (varnames !! ix)
+
+    showParam ix = "\\theta_{" <> show ix <> "}"
+
+    showFun g t =
+      case g of
+        Id -> t
+        Abs -> "\\left|" <> t <> "\\right|"
+
+        Sqrt -> "\\sqrt{" <> t <> "}"
+
+        SqrtAbs -> "\\sqrt{\\left|" <> t <> "\\right|}"
+
+        Cbrt    -> t <> "^{\\frac{1}{3}}"
+        Square  -> t <> "^2"
+        Cube    -> t <> "^3"
+        LogAbs  -> "\\log{(\\left|" <> t <> "\\right|)}"
+
+        Exp     -> "e^{" <> t <> "}"
+
+        Recip   -> "\\frac{1}{" <> t <> "}"
+
+        _       -> "\\operatorname{" <> showLower g <> "}(" <> t <> ")"
+
+    showOp op l r =
+      case op of
+        Add       -> "\\left(" <> l <> " + " <> r <> "\\right)"
+
+        Sub       -> "\\left(" <> l <> " - " <> r <> "\\right)"
+
+        Mul       -> "\\left(" <> l <> " \\cdot " <> r <> "\\right)"
+
+        Div       -> "\\frac{" <> l <> "}{" <> r <> "}"
+        Power     -> "{" <> l <> "^{" <> r <> "}}"
+        PowerAbs  -> "{\\left|" <> l <> "\\right|^{" <> r <> "}}"
+        AQ        -> "\\frac{" <> l <> "}{\\sqrt{1+" <> r <> "^2}}"
+    showNormal tr =
+      do case tr of
+            Fix (Var ix) -> pure (showVar ix)
+            Fix (Param ix) -> pure (showParam ix)
+            Fix (Const  x) -> pure (show x)
+            Fix (Uni g  t) -> do t' <- showNormal t
+                                 pure (showFun g t')
+            Fix (Bin op l r) -> do l' <- showNormal l
+                                   r' <- showNormal r
+                                   pure (showOp op l' r')
 
 fillDL dist datasets = do
   ecs <- getAllEvaluatedEClasses

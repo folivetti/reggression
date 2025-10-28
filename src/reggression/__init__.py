@@ -18,7 +18,7 @@ from ._binding import (
     unsafe_hs_reggression_exit,
 )
 
-VERSION: str = "1.0.9"
+VERSION: str = "1.0.10"
 
 
 _hs_rts_init: bool = False
@@ -322,13 +322,17 @@ class Reggression():
             E-class id of the e-class
         '''
         return self.runQuery(f"optimize {n}")
-    def eqsat(self):
-        ''' run 5 steps of equality saturation
+    def eqsat(self, n=1):
+        ''' run n steps of equality saturation
         sequentially for each rule (see https://github.com/folivetti/srtree/blob/main/src/Algorithm/EqSat/Simplify.hs)
         Note: if the e-graph is large, this will take some seconds. This will not ensure saturation as it will run each rule
         sequentially.
         '''
-        return self.runQuery("eqsat 0")
+        return self.runQuery(f"eqsat {n}")
+    def getNExpressions(self, eid, n=10):
+        ''' return n expressions described by e-class id eid 
+        '''
+        return self.runQuery(f"getNExprs {n} {eid}")
     def subtrees(self, n):
         ''' Return the subtrees of e-class n
 

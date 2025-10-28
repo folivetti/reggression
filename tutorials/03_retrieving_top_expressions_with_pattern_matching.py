@@ -51,7 +51,7 @@ Top {N} expressions with pattern log(v0) ^ v1 at the root:""")
 print(egg.top(N, pattern="log(v0) ^ v1", isRoot=True)[['Expression', 'Fitness', 'Size']])
 
 print(f"""\nThe argument `negate` when True will retrieve the expressions NOT matching the pattern.
-Top {N} expressions not matching x0 + v0 * x1:""")
+Top {N} expressions not matching x0 + v0 * x1 (notice that the matching is in this exact\nother, so this can show the pattern x1 * v0 + x0, for example):""")
 print(egg.top(N, pattern="x0 + v0 * x1", negate=True)[['Expression', 'Fitness', 'Size']])
 
 print(f"\nTop {N} expressions not matching log(v0):")

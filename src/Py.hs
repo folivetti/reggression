@@ -55,7 +55,7 @@ import qualified Data.IntSet as IntSet
 import qualified Data.Set as SSet
 import System.IO (withFile, IOMode(ReadMode)) 
 
-import Algorithm.EqSat.SearchSR hiding (io)
+import Algorithm.EqSat.SearchSR hiding (io, myCost)
 import Text.Read (readMaybe)
 
 data Args = Args
@@ -80,7 +80,7 @@ printFun varnames datatrains datatests loss (SingleExpr eid)  = printExpr varnam
 printFun varnames _          _         _    (Counts pats)     = printMultiCounts pats
 printFun varnames _          _         _    (SimpleStr str)   = pure str
 printFun varnames _          _         _    NoPrint           = pure ""
-
+printFun varnames _          _         _    (MultiTrees ts)   = printSimpleMultiTrees varnames ts
 
 runIfRight varnames cmd = case cmd of
                             Left err -> pure $ "wrong command format."
@@ -119,8 +119,14 @@ optimizeCmd varnames dist trainData testData args =
                   run (Optimize n nIters (dist, trainData, trainData)) >>= printFun varnames trainData testData dist
 
 eqSatCmd varnames _ _ _ [] = helpCmd ["eqsat"]
-eqSatCmd varnames dist trainData testData _ =
-  run (EqSatStep (dist, trainData, trainData)) >>= printFun varnames trainData testData dist
+eqSatCmd varnames dist trainData testData (arg:_) = case readMaybe @Int arg of
+                        Nothing -> pure "The argument must be an integer."
+                        Just n  -> run (EqSatStep n (dist, trainData, trainData)) >>= printFun varnames trainData testData dist
+
+getNExprsCmd varnames (arg1:arg2:_) = case  ((,) <$> readMaybe @Int arg1 <*> readMaybe @Int arg2) of
+                                  Nothing -> pure $ "Both arguments should be an integer."
+                                  Just (n,eid) -> run (GetNExprs n eid) >>= printFun varnames [] [] Gaussian
+getNExprsCmd varnames _ = helpCmd ["getNExprs"]
 
 --subtreesCmd :: [String] -> Repl ()
 subtreesCmd varnames [] = helpCmd ["subtrees"]
@@ -169,7 +175,7 @@ extractPatCmd varnames args = case readMaybe @Int (head args) of
     Nothing -> pure "The id must be an integer."
     Just n  -> run (ExtractPat n) >>= printFun varnames [] [] Gaussian
 
-commands = ["help", "top", "report", "optimize", "eqsat", "subtrees", "insert", "count-pattern", "distribution", "modularity", "pareto", "save", "load", "import", "extract-pattern", "distribution-tokens"]
+commands = ["help", "top", "report", "optimize", "eqsat", "getNExprs", "subtrees", "insert", "count-pattern", "distribution", "modularity", "pareto", "save", "load", "import", "extract-pattern", "distribution-tokens"]
 
 topHlp = "top N [FILTER...] [CRITERIA] [[not] matching [root] PATTERN] \n \
          \ \n \
@@ -238,6 +244,7 @@ hlpMap = Map.fromList $ Prelude.zip commands
                             , "report N: displays a detailed report for the expression with id N."
                             , "optimize N: (re)optimize expression with id N."
                             , "eqsat: run a single step of equality saturation and refit any expression with changed number of parameters."
+                            , "getNExprs N id: get N equivalent expressions rooted at id."
                             , "subtrees N: shows the subtrees for the tree rotted with id N."
                             , "insert EXPR: inserts a new expression EXPR and evaluates."
                             , countHlp
@@ -287,6 +294,7 @@ reggression myCmd dataset testData loss' loadFrom dumpTo parseCSV' parseParams c
              , reportCmd varnames loss dataTrains dataTests
              , optimizeCmd varnames loss dataTrains dataTests
              , eqSatCmd varnames loss dataTrains dataTests
+             , getNExprsCmd varnames
              , subtreesCmd varnames
              , insertCmd varnames loss dataTrains dataTests
              , countPatCmd varnames

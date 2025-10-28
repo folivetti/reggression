@@ -1,0 +1,18 @@
+getNExprs 10 2
+eqsat 10
+getNExprs 10 2
+insert log(exp(x0))
+getNExprs 2 0
+getNExprs 2 2
+top 10
+getNExprs 10 3
+eqsat 10
+insert log(exp(x0))
+quit()
+quit
+:q
+getNExprs 10 3
+eqsat 10
+getNExprs 10 3
+eqsat 2
+insert log(x0*x1)

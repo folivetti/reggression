@@ -7,52 +7,25 @@ N = 5
 # Load the dataset and create an empty e-graph
 egg = Reggression(dataset="datasets/nikuradse_1.csv", loadFrom="regression_example.egg", loss="MSE") 
 
-# Return the top N expressions
-print(f"""\nIn rEGGression, pattern matching is writen as a mathematical expression where
-x0 .. xn is one of the input variables
-t0 .. tn is one of the numerical parameters
-v0 .. vn is a match all pattern.
-Examples:
+# Show the distribution of the top patterns
+print(f"""\nDistribution of the top {N} patterns in the e-graph, considering
+the average fitness, sorted from the best to the worst, and only those with at least 100 occurrences,
+and extracted from the top 5000 expressions:""")
+print(egg.distribution(limitedAt=N, dsc=True, byFitness=True, atLeast=100, fromTop=5000))
 
-x0 + t0 * x1 will match this exact expression, if it exists.
-x0 + v0 * x1 will match expressions such as:
-   - x0 + t0 * x1
-   - x0 + x0 * x1
-   - x0 + sin(x0 + t0 * x1) * x1
-among others.
 
-v0 ^ v0 will match:
-    - x0 ^ x0
-    - log(x0 + t0) ^ log(x0 + t0)
-among others.
+print(f"""\nDisabling byFitness will sort by frequency of occurrence:""")
+print(egg.distribution(limitedAt=N, dsc=False, byFitness=False, atLeast=100, fromTop=5000))
 
-v0 ^ v1 will match:
-    - x0 ^ x1
-    - log(x0 + t0) ^ log(x0 + t0)
-    - log(x0 + t0) ^ sin(t1 * x1)
-among others.
+print(f"""\nWe can also count the frequency of a certain pattern, for example 'x0 + v0 ^ v1':""")
+print(egg.countPattern("x0 + v0 ^ v1"))
 
-    Best {N} expressions according to MSE that matches the pattern log(v0) ^ v1:""")
-print(egg.top(N, pattern="log(v0) ^ v1")[['Expression', 'Fitness', 'Size']])
+print(f"""\nWe can extract the patterns from one expression:""")
+print(egg.extractPattern(110))
 
-print(f"\nTop {N} expressions with pattern v0 ^ v0:")
-print(egg.top(N, pattern="v0 ^ v0")[['Expression', 'Fitness', 'Size']])
+print(f"""And, finally, analyse the distribution of tokens of the top-100 expressions:""")
+print(egg.distributionOfTokens(top=100))
 
-print(f"""\nThe argument `isRoot` when True will match only those expressions with a root matching the pattern. For example:
-x0 + v0 * x1 will match expressions such as:
-    - x0 + t0 * x1
-    - x0 + x0 * x1
-    - x0 + sin(x0 + t0 * x1) * x1
-But it will NOT match:
-    - log(x0 + t0 * v1)
-    - (x0 + t0 * v1) * t1
-    - x0 + t0 * v1 + t1
-Top {N} expressions with pattern log(v0) ^ v1 at the root:""")
-print(egg.top(N, pattern="log(v0) ^ v1", isRoot=True)[['Expression', 'Fitness', 'Size']])
-
-print(f"""\nThe argument `negate` when True will retrieve the expressions NOT matching the pattern.
-Top {N} expressions not matching x0 + v0 * x1:""")
-print(egg.top(N, pattern="x0 + v0 * x1", negate=True)[['Expression', 'Fitness', 'Size']])
-
-print(f"\nTop {N} expressions not matching log(v0):")
-print(egg.top(N, pattern="log(v0)", negate=True)[['Expression', 'Fitness', 'Size']])
+print(f"""We can also search for the top expressions that present a modularity with size greater than 2.
+Modularity here means expressions with repeated sub-expressions. This is shown in LaTeX format:""")
+print(egg.modularity(5, filters=[">2"]).Latex)

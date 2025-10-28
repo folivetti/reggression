@@ -38,7 +38,7 @@ import Algorithm.EqSat.Build
 import Algorithm.EqSat.Info
 import Algorithm.EqSat.Queries
 import Algorithm.EqSat.DB
-import Algorithm.EqSat.Simplify
+import Algorithm.EqSat.Simplify hiding (myCost)
 
 import Algorithm.SRTree.ModelSelection
 import Algorithm.EqSat.SearchSR hiding (fitnessFun, fitnessFunRep, fitnessMV)
@@ -66,7 +66,8 @@ data Command  = Top Int Filter Criteria PatStr
               | Save String
               | Load String
               | Import String Distribution String Bool
-              | EqSatStep ArgOpt
+              | EqSatStep Int ArgOpt
+              | GetNExprs Int EClassId
               | Clean Int
 
 type Filter = EClass -> Bool -- pattern?
@@ -202,8 +203,8 @@ putEOL :: B.ByteString -> B.ByteString
 putEOL bs | B.last bs == '\n' = bs
           | otherwise         = B.snoc bs '\n'
 
-data PrintResults = MultiExprs [(EClassId, IntMap.IntMap (Int, Int))] | SingleExpr EClassId | Counts [(Pattern, (Int, Double))] | SimpleStr String | NoPrint
-                  deriving (Show)
+data PrintResults = MultiExprs [(EClassId, IntMap.IntMap (Int, Int))] | SingleExpr EClassId | Counts [(Pattern, (Int, Double))] | SimpleStr String | MultiTrees [Fix SRTree] | NoPrint
+                  -- deriving (Show)
 
 -- running
 run :: Command -> MyEGraph PrintResults
@@ -349,8 +350,16 @@ run (ExtractPat eid) = do
   pats <- getAllPatterns (const True) eid
   pure . Counts $ Prelude.map (\(p, c) -> (p, (c, 0))) $ Map.toList pats
 
-run (EqSatStep dataInfo) = do (forM rewrites $ \r -> runEqSat myCost [r] 1) >> refitChanged dataInfo
-                              pure NoPrint
+--run (EqSatStep n dataInfo) = do (forM rewrites $ \r -> runEqSat myCost [r] n) >> refitChanged dataInfo
+--                                pure NoPrint
+run (EqSatStep n dataInfo) = do createDB 
+                                forM_ [1..n] $ \_ -> (do runEqSat myCost rewrites 1
+                                                         createDB)
+                                refitChanged dataInfo
+                                pure NoPrint
+
+run (GetNExprs n eid) = do ts <- getNExpressionsFrom n eid
+                           pure $ MultiTrees ts
 -- dataInfo = (dist, trainDatas, testData)
 --  runEqSat myCost rewrites 1
 
