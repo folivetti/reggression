@@ -273,7 +273,7 @@ As we can see, there is still a vast ground to be explored with the combination 
 
 ## Try it yourself
 
-The full Jupyter Notebook is available [here]()
+The full Jupyter Notebook is available [here](https://github.com/folivetti/reggression/tree/main/tutorials/blog)
 And rEGGression repository also host some [tutorials](https://github.com/folivetti/reggression/tree/main/tutorials)
 
 ## References
