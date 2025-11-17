@@ -70,16 +70,16 @@ Looking at the results we can see the Pareto front with different trade-offs of 
 | Math                                                                                                                                                                                                                                 |   size |   loss_train |
 |:-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-------:|-------------:|
 | $$\theta_{0}$$                                                                                                                                                                                                                       |      1 |   0.360495   |
-| $$\left(\theta_{0} + \operatorname{cos}(x_{0})\right)$$                                                                                                                                                                              |      4 |   0.319114   |
+| $$\left(\theta_{0} + \text{cos}(x_{0})\right)$$                                                                                                                                                                              |      4 |   0.319114   |
 | $$\left(\theta_{0} + \frac{\theta_{1}}{x_{0}}\right)$$                                                                                                                                                                               |      5 |   0.318433   |
 | $$\left(\theta_{0} + (\left(\theta_{1} - x_{0}\right))^2\right)$$                                                                                                                                                 |      6 |   0.0641624  |
-| $$\left(\left(\operatorname{cos}(x_{0}) \cdot \left(x_{0} + \theta_{0}\right)\right) + \theta_{1}\right)$$                                                                                                                           |      8 |   0.0421559  |
-| $$\left(\theta_{0} + \left(\operatorname{cos}(\left(\theta_{1} + \operatorname{cos}(x_{0})\right)) \cdot x_{0}\right)\right)$$                                                                                                       |      9 |   0.012507   |
-| $$\left(\theta_{0} + \left(\operatorname{cos}(\left(\theta_{1} + \operatorname{cos}(x_{0})\right)) \cdot \left(\theta_{2} \cdot x_{0}\right)\right)\right)$$                                                                         |     11 |   0.00899634 |
-| $$\left(\theta_{0} + \left(\operatorname{cos}(\operatorname{cos}(x_{0})) \cdot \left(\theta_{1} \cdot \operatorname{cos}(\left(x_{0} + \theta_{2}\right))\right)\right)\right)$$                                                     |     12 |   0.0046806  |
-| $$\left(\theta_{0} - \left(\operatorname{cos}(\operatorname{cos}(x_{0})) \cdot \left(\theta_{1} \cdot \operatorname{cos}(\left (\left(x_{0} + \theta_{2}\right)\right ))\right)\right)\right)$$                                      |     13 |   0.00481255 |
-| $$\left(\theta_{0} + \left(\operatorname{cos}(\operatorname{cos}(x_{0})) \cdot \left(\theta_{1} \cdot \operatorname{cos}(\left(\left(\theta_{2} - x_{0}\right) + \theta_{3}\right))\right)\right)\right)$$                           |     14 |   0.00586963 |
-| $$\left(\left(\operatorname{cos}(\operatorname{cos}(x_{0})) \cdot \left(\theta_{0} \cdot \operatorname{cos}(\left(\left(\theta_{1} - \left(x_{0} + \theta_{2}\right)\right) + \theta_{3}\right))\right)\right) + \theta_{4}\right)$$ |     16 |   0.00547237 |
+| $$\left(\left(\text{cos}(x_{0}) \cdot \left(x_{0} + \theta_{0}\right)\right) + \theta_{1}\right)$$                                                                                                                           |      8 |   0.0421559  |
+| $$\left(\theta_{0} + \left(\text{cos}(\left(\theta_{1} + \text{cos}(x_{0})\right)) \cdot x_{0}\right)\right)$$                                                                                                       |      9 |   0.012507   |
+| $$\left(\theta_{0} + \left(\text{cos}(\left(\theta_{1} + \text{cos}(x_{0})\right)) \cdot \left(\theta_{2} \cdot x_{0}\right)\right)\right)$$                                                                         |     11 |   0.00899634 |
+| $$\left(\theta_{0} + \left(\text{cos}(\text{cos}(x_{0})) \cdot \left(\theta_{1} \cdot \text{cos}(\left(x_{0} + \theta_{2}\right))\right)\right)\right)$$                                                     |     12 |   0.0046806  |
+| $$\left(\theta_{0} - \left(\text{cos}(\text{cos}(x_{0})) \cdot \left(\theta_{1} \cdot \text{cos}(\left (\left(x_{0} + \theta_{2}\right)\right ))\right)\right)\right)$$                                      |     13 |   0.00481255 |
+| $$\left(\theta_{0} + \left(\text{cos}(\text{cos}(x_{0})) \cdot \left(\theta_{1} \cdot \text{cos}(\left(\left(\theta_{2} - x_{0}\right) + \theta_{3}\right))\right)\right)\right)$$                           |     14 |   0.00586963 |
+| $$\left(\left(\text{cos}(\text{cos}(x_{0})) \cdot \left(\theta_{0} \cdot \text{cos}(\left(\left(\theta_{1} - \left(x_{0} + \theta_{2}\right)\right) + \theta_{3}\right))\right)\right) + \theta_{4}\right)$$ |     16 |   0.00547237 |
 
 
 
@@ -100,11 +100,11 @@ egg.top(5)[["Latex", "Fitness", "Size"]]
 
 | Latex                                                                                                                                                                                                                                                                      |     Fitness |   Size |
 |:---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|------------:|-------:|
-| $$\left(\left(\operatorname{cos}(\operatorname{cos}(x)) \cdot \left(\theta_{0} \cdot \operatorname{cos}(\left(\left(\theta_{1} - \left(x + \theta_{2}\right)\right) + \theta_{3}\right))\right)\right) + \theta_{4}\right)$$                           | -0.00415306 |     16 |
-| $$\left(\theta_{0} + \left(\operatorname{cos}(\operatorname{cos}(x)) \cdot \left(\operatorname{cos}(\left(\mid\mid\left(\left(x + \theta_{1}\right) + \theta_{2}\right)\mid\mid + \theta_{3}\right)) \cdot \theta_{4}\right)\right)\right)$$ | -0.00425244 |     18 |
-| $$\left(\left(\left(\operatorname{cos}(\operatorname{cos}(x)) \cdot \left(\operatorname{cos}(\left(\left(\theta_{0} - \left(x + \theta_{1}\right)\right) + \theta_{2}\right)) \cdot \theta_{3}\right)\right) + \theta_{4}\right) + \theta_{5}\right)$$ | -0.00430326 |     18 |
-| $$\left(\theta_{0} + \left(\left(\operatorname{cos}(\operatorname{cos}(x)) \cdot \left(\operatorname{cos}(\left(\mid\left(\sqrt{x}^2 + \theta_{1}\right)\mid + \theta_{2}\right)) \cdot \theta_{3}\right)\right) + \theta_{4}\right)\right)$$     | -0.00430774 |     19 |
-| $$\left(\theta_{0} + \left(\operatorname{cos}(\operatorname{cos}(x)) \cdot \left(\theta_{1} \cdot \operatorname{cos}(\left(\left(\theta_{2} - x\right) + \theta_{3}\right))\right)\right)\right)$$                                                     | -0.0043503  |     14 |
+| $$\left(\left(\text{cos}(\text{cos}(x)) \cdot \left(\theta_{0} \cdot \text{cos}(\left(\left(\theta_{1} - \left(x + \theta_{2}\right)\right) + \theta_{3}\right))\right)\right) + \theta_{4}\right)$$                           | -0.00415306 |     16 |
+| $$\left(\theta_{0} + \left(\text{cos}(\text{cos}(x)) \cdot \left(\text{cos}(\left(\mid\mid\left(\left(x + \theta_{1}\right) + \theta_{2}\right)\mid\mid + \theta_{3}\right)) \cdot \theta_{4}\right)\right)\right)$$ | -0.00425244 |     18 |
+| $$\left(\left(\left(\text{cos}(\text{cos}(x)) \cdot \left(\text{cos}(\left(\left(\theta_{0} - \left(x + \theta_{1}\right)\right) + \theta_{2}\right)) \cdot \theta_{3}\right)\right) + \theta_{4}\right) + \theta_{5}\right)$$ | -0.00430326 |     18 |
+| $$\left(\theta_{0} + \left(\left(\text{cos}(\text{cos}(x)) \cdot \left(\text{cos}(\left(\mid\left(\sqrt{x}^2 + \theta_{1}\right)\mid + \theta_{2}\right)) \cdot \theta_{3}\right)\right) + \theta_{4}\right)\right)$$     | -0.00430774 |     19 |
+| $$\left(\theta_{0} + \left(\text{cos}(\text{cos}(x)) \cdot \left(\theta_{1} \cdot \text{cos}(\left(\left(\theta_{2} - x\right) + \theta_{3}\right))\right)\right)\right)$$                                                     | -0.0043503  |     14 |
 
 Some of these functions behave similarly while others display a different behavior when looking outside of the training region:
 
@@ -195,7 +195,7 @@ egg.insert("exp(x0/t0)*(x0^3)*(cos(x0)*(sin(x0)^2)-t1)")
 
 | Latex                                                                                                                                                                                                        |     Fitness | Parameters                                |
 |:-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|------------:|:------------------------------------------|
-| $$\left(\left({x^{3.0}} \cdot \left(\left(\operatorname{cos}(x) \cdot {\operatorname{sin}(x)^{2.0}}\right) + \theta_{0}\right)\right) \cdot e^{\left(x \cdot \theta_{1}\right)}\right)$$ | -0.00256414 | [-3.15, -0.83] |
+| $$\left(\left({x^{3.0}} \cdot \left(\left(\text{cos}(x) \cdot {\text{sin}(x)^{2.0}}\right) + \theta_{0}\right)\right) \cdot e^{\left(x \cdot \theta_{1}\right)}\right)$$ | -0.00256414 | [-3.15, -0.83] |
 
 The answer is YES! We can get the ground-truth expression with enough iterations and a larger amount of luck :-)
 Or, we can even resort to adding some constraints [[5]](#5)...
@@ -252,20 +252,18 @@ egg.getNExpressions(eid1, 10)
 
 Leading to:
 
-$$
-((6.0 + x) * x)   \\
-((x + 6.0) * x)  \\
-((x * 6.0) + (x ^ 2))  \\
-((x * 6.0) + (x ^ 2))  \\
-(0.0 + ((6.0 + x) * x))  \\
-(0.0 + ((x + 6.0) * x))  \\
-((2.0 * (x * 3.0)) + (x ^ 2))  \\
-((2.0 * (3.0 * x)) + (x ^ 2))  \\
-(((x * 3.0) * 2.0) + (x ^ 2))  \\
-(((3.0 * x) * 2.0) + (x ^ 2)) \\
-$$
+$$((6.0 + x) * x)$$
+$$((x + 6.0) * x)$$
+$$((x * 6.0) + (x ^ 2))$$
+$$((x * 6.0) + (x ^ 2))$$
+$$(0.0 + ((6.0 + x) * x))$$
+$$(0.0 + ((x + 6.0) * x))$$
+$$((2.0 * (x * 3.0)) + (x ^ 2))$$
+$$((2.0 * (3.0 * x)) + (x ^ 2))$$
+$$(((x * 3.0) * 2.0) + (x ^ 2))$$
+$$(((3.0 * x) * 2.0) + (x ^ 2))$$
 
-This can potentially be used to exploit e-graphs with reward based algorithms such as Monte Carlo Tree Search [[6]](#6) [[7]](#7) and Deep Reinforcement Learning [[8]](#8). Whenever a new expression is produced, we can reinforce the building blocks or producing rules for a subset of the equivalent expressions, increasing the probability of alternative structures in parallel. Another possibility is to input alternative expressions to LLMs [[9]](#9).
+This can potentially be used to integrate e-graphs with other genetic programming algorithms or even reward based algorithms such as Monte Carlo Tree Search [[6]](#6) [[7]](#7) and Deep Reinforcement Learning [[8]](#8), and LLMs [[9]](#9).
 
 ## Stay tuned!
 
