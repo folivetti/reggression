@@ -29,6 +29,12 @@ try:
     assert not pareto_db.empty, "dbPareto returned no rows"
     assert {"Id", "Fitness", "Size"}.issubset(pareto_db.columns), pareto_db.columns
 
+    msg_push = reg.dbPushFit(fname)
+    assert msg_push.startswith("fit table written"), f"unexpected dbPushFit message: {msg_push!r}"
+
+    msg_refresh = reg.dbRefreshFitness(fname)
+    assert msg_refresh.startswith("fitness refreshed"), f"unexpected dbRefreshFitness message: {msg_refresh!r}"
+
     msg_load = reg.loadDB(fname)
     assert "loaded" in msg_load, f"unexpected loadDB message: {msg_load!r}"
 

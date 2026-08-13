@@ -52,7 +52,7 @@ import Data.Binary ( encode, decode )
 import qualified Data.ByteString.Lazy as BS
 
 import Database.SQLite3 ( Database, open, close )
-import Algorithm.EqSat.Storage.SQLite ( saveGraph, loadGraph )
+import Algorithm.EqSat.Storage.SQLite ( saveGraph, loadGraph, pushFit, refreshFitness )
 import qualified Algorithm.EqSat.Storage.Query as Q
 
 import Util
@@ -79,8 +79,10 @@ data Command  = Top Int Filter Criteria PatStr
               | DBTop String Int
               | DBDist String Int
               | DBCount String String
-              | DBPareto String
-              | Import String Loss String Bool
+               | DBPareto String
+               | PushFit String
+               | RefreshFit String
+               | Import String Loss String Bool
               | EqSatStep Int ArgOpt
               | GetNExprs Int EClassId
               | Clean Int
@@ -178,6 +180,8 @@ parseDBCount = string "db-count " >>= \_ -> do
   op <- B.unpack <$> parseFname
   pure (DBCount fname op)
 parseDBPareto = string "db-pareto " *> (DBPareto <$> (B.unpack <$> parseFname)) 
+parsePushFit = string "db-push-fit " *> (PushFit <$> (B.unpack <$> parseFname))
+parseRefreshFit = string "db-refresh-fitness " *> (RefreshFit <$> (B.unpack <$> parseFname))
 parseCriteriaDL = (stringCI "by count" >> pure ByCount)
               <|> (stringCI "by fitness" >> pure ByAvgFit)
 
@@ -488,6 +492,20 @@ run (DBCount fname op) = do
 run (DBPareto fname) = do
   r <- liftIO $ withSQLite fname $ \db -> Q.paretoBySize db
   pure . SimpleStr . intercalate "\n" $ ("Id,Fitness,Size" : [show eid <> "," <> show f <> "," <> show s | (eid, f, s) <- r])
+
+run (PushFit fname) = do
+  eg <- get
+  liftIO $ withSQLite fname $ \db -> pushFit db eg
+  pure . SimpleStr $ "fit table written to " <> fname
+
+run (RefreshFit fname) = do
+  eg <- get
+  r  <- liftIO $ withSQLite fname $ \db -> refreshFitness db eg
+  case r of
+    Left err -> pure . SimpleStr $ "db-refresh-fitness failed: " <> err
+    Right eg' -> do put eg'
+                    rebuildAllRanges
+                    pure (SimpleStr ("fitness refreshed from " <> fname))
 
 run (Import fname dist varnames params) = do
   importCSV dist fname varnames params

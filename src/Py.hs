@@ -200,7 +200,13 @@ dbCountCmd varnames _ = helpCmd ["db-count"]
 dbParetoCmd varnames (fname:_) = run (DBPareto fname) >>= printFun varnames [] [] (NLL Gaussian)
 dbParetoCmd varnames _ = helpCmd ["db-pareto"]
 
-commands = ["help", "top", "report", "optimize", "eqsat", "getNExprs", "subtrees", "insert", "count-pattern", "distribution", "modularity", "pareto", "save", "load", "import", "extract-pattern", "distribution-tokens", "getNEclasses", "persist", "db-load", "db-top", "db-distribution", "db-count", "db-pareto"]
+dbPushFitCmd varnames [] = helpCmd ["db-push-fit"]
+dbPushFitCmd varnames args = run (PushFit (unwords args)) >>= printFun varnames [] [] (NLL Gaussian)
+
+dbRefreshFitCmd varnames [] = helpCmd ["db-refresh-fitness"]
+dbRefreshFitCmd varnames args = run (RefreshFit (unwords args)) >>= printFun varnames [] [] (NLL Gaussian)
+
+commands = ["help", "top", "report", "optimize", "eqsat", "getNExprs", "subtrees", "insert", "count-pattern", "distribution", "modularity", "pareto", "save", "load", "import", "extract-pattern", "distribution-tokens", "getNEclasses", "persist", "db-load", "db-top", "db-distribution", "db-count", "db-pareto", "db-push-fit", "db-refresh-fitness"]
 
 topHlp = "top N [FILTER...] [CRITERIA] [[not] matching [root] PATTERN] \n \
          \ \n \
@@ -286,7 +292,9 @@ hlpMap = Map.fromList $ Prelude.zip commands
                             , "db-top FILE N: top-N e-classes by fitness queried from the SQLite database FILE."
                             , "db-distribution FILE N: number of evaluated e-classes per model size (size <= N) from the SQLite database FILE."
                             , "db-count FILE OP: number of e-classes containing an e-node with operator OP (e.g. EAdd, EMul, LogAbs) from the SQLite database FILE."
-                            , "db-pareto FILE: Pareto front over (fitness, dl) from the SQLite database FILE."
+                            , "db-pareto FILE: Pareto front over (fitness, size) from the SQLite database FILE."
+                            , "db-push-fit FILE: write the current e-graph's fitness/DL metrics into the @fit@ table of the SQLite database FILE (the graph structure is left intact)."
+                            , "db-refresh-fitness FILE: overwrite the in-memory fitness values with those stored in the @fit@ table of the SQLite database FILE (per e-class, by canonical id)."
                             ]
 
 -- Evaluation
@@ -345,6 +353,8 @@ reggression myCmd dataset testData loss' loadFrom dumpTo parseCSV' parseParams c
              , dbDistCmd varnames
              , dbCountCmd varnames
              , dbParetoCmd varnames
+             , dbPushFitCmd varnames
+             , dbRefreshFitCmd varnames
              ]
       cmdMap = Map.fromList $ Prelude.zip commands funs
 

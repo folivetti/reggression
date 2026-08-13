@@ -453,7 +453,7 @@ class Reggression():
         '''
         return self.runQuery(f"db-count {fname} {op}", df=False)
     def dbPareto(self, fname):
-        ''' Pareto front over (max fitness, min dl) queried from the SQLite
+        ''' Pareto front over (max fitness, min size) queried from the SQLite
         database fname.
 
         Parameters
@@ -462,6 +462,27 @@ class Reggression():
             SQLite database filename
         '''
         return self.runQuery(f"db-pareto {fname}")
+    def dbPushFit(self, fname):
+        ''' Write the current e-graph's fitness/DL metrics into the @fit@ table
+        of the SQLite database fname (the graph structure is left intact).
+
+        Parameters
+        ----------
+        fname : str
+            SQLite database filename
+        '''
+        return self.runQuery(f"db-push-fit {fname}", df=False)
+    def dbRefreshFitness(self, fname):
+        ''' Overwrite the in-memory fitness values with those stored in the
+        @fit@ table of the SQLite database fname (per e-class, by canonical
+        id).
+
+        Parameters
+        ----------
+        fname : str
+            SQLite database filename
+        '''
+        return self.runQuery(f"db-refresh-fitness {fname}", df=False)
     def importFromCSV(self, fname, extractParameters=True):
         ''' import equations from a CSV file
         IMPORTANT: the extension of the CSV file must match the source
