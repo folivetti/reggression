@@ -10,7 +10,6 @@
 module Py (reggression) where
 
 import Algorithm.SRTree.Likelihoods
-import Algorithm.SRTree.Opt
 import Control.Monad.State.Strict
 
 import Algorithm.EqSat.Egraph
@@ -21,7 +20,6 @@ import Algorithm.EqSat.DB
 import Algorithm.EqSat.Simplify
 
 import qualified Data.IntMap as IM
-import Data.Massiv.Array as MA hiding (forM_, forM, Continue, convert)
 import Data.Maybe (fromJust, isNothing, isJust)
 import Data.SRTree
 import Data.SRTree.Recursion
@@ -49,7 +47,7 @@ import Control.Monad ( forM, when, forM_ )
 import Data.Binary ( encode, decode )
 import qualified Data.ByteString.Lazy as BS
 import Data.Maybe ( fromMaybe )
-import Text.ParseSR (SRAlgs(..), parseSR, parsePat, Output(..), showOutput)
+import Text.ParseSR (SRAlgs(..), parseSR, Output(..), showOutput)
 import qualified Data.ByteString.Char8 as B
 import qualified Data.IntSet as IntSet
 import qualified Data.Set as SSet
@@ -61,7 +59,7 @@ import Text.Read (readMaybe)
 data Args = Args
   { _dataset       :: String,
     _testData      :: String,
-    _loss          :: Distribution,
+    _loss          :: Loss,
     _dumpTo        :: String,
     _loadFrom      :: String,
     _parseCSV      :: String,
@@ -74,17 +72,17 @@ data Args = Args
 egraph :: IO a -> MyEGraph a
 egraph = Control.Monad.State.Strict.lift
 
-printFun :: [String] -> [DataSet] -> [DataSet] -> Distribution -> PrintResults -> MyEGraph String
+printFun :: [String] -> [DataSet] -> [DataSet] -> Loss -> PrintResults -> MyEGraph String
 printFun varnames _          _         _    (MultiExprs eids) = printSimpleMultiExprs varnames eids
 printFun varnames datatrains datatests loss (SingleExpr eid)  = printExpr varnames datatrains datatests loss eid
 printFun varnames _          _         _    (Counts pats)     = printMultiCounts pats
 printFun varnames _          _         _    (SimpleStr str)   = pure str
 printFun varnames _          _         _    NoPrint           = pure ""
 printFun varnames _          _         _    (MultiTrees ts)   = printSimpleMultiTrees varnames ts
-
+printFun varnames _          _         _    (MultiClass eids) = printEClasses eids
 runIfRight varnames cmd = case cmd of
                             Left err -> pure $ "wrong command format."
-                            Right c  -> run c >>= printFun varnames [] [] Gaussian
+                            Right c  -> run c >>= printFun varnames [] [] (NLL Gaussian)
 
 --topCmd :: [String] -> Repl ()
 topCmd varnames []    = helpCmd ["top"]
@@ -125,14 +123,19 @@ eqSatCmd varnames dist trainData testData (arg:_) = case readMaybe @Int arg of
 
 getNExprsCmd varnames (arg1:arg2:_) = case  ((,) <$> readMaybe @Int arg1 <*> readMaybe @Int arg2) of
                                   Nothing -> pure $ "Both arguments should be an integer."
-                                  Just (n,eid) -> run (GetNExprs n eid) >>= printFun varnames [] [] Gaussian
+                                  Just (n,eid) -> run (GetNExprs n eid) >>= printFun varnames [] [] (NLL Gaussian)
 getNExprsCmd varnames _ = helpCmd ["getNExprs"]
+
+getNEclassesCmd varnames (arg1:arg2:_) = case  ((,) <$> readMaybe @Int arg1 <*> readMaybe @Int arg2) of
+                                          Nothing -> pure $ "Both arguments should be an integer."
+                                          Just (n,eid) -> run (GetNEclass n eid) >>= printFun varnames [] [] (NLL Gaussian)
+getNEclassesCmd varnames _ = helpCmd ["getNEclasses"]
 
 --subtreesCmd :: [String] -> Repl ()
 subtreesCmd varnames [] = helpCmd ["subtrees"]
 subtreesCmd varnames (arg:_) = case readMaybe @Int arg of
                         Nothing -> pure "The argument must be an integer."
-                        Just n  -> (run (Subtrees n) >>= printFun varnames [] [] Gaussian)
+                        Just n  -> (run (Subtrees n) >>= printFun varnames [] [] (NLL Gaussian))
 
 --insertCmd :: Distribution -> [DataSet] -> [DataSet] -> [String] -> Repl ()
 insertCmd varnames dist trainData testData [] = helpCmd ["insert"]
@@ -144,23 +147,23 @@ insertCmd varnames dist trainData testData args = do
                      (run (Optimize ec 100 (dist, trainData, trainData)) >>= printFun varnames trainData testData dist)
 
 --paretoCmd :: [String] -> Repl ()
-paretoCmd varnames []   = run (Pareto ByFitness) >>= printFun varnames [] [] Gaussian
+paretoCmd varnames []   = run (Pareto ByFitness) >>= printFun varnames [] [] (NLL Gaussian)
 paretoCmd varnames args = case (Prelude.map toLower $ unwords args) of
-                    "by fitness" -> (run (Pareto ByFitness ) >>= printFun varnames [] [] Gaussian)
-                    "by dl"      -> (run (Pareto ByDL) >>= printFun varnames [] [] Gaussian)
+                    "by fitness" -> (run (Pareto ByFitness ) >>= printFun varnames [] [] (NLL Gaussian))
+                    "by dl"      -> (run (Pareto ByDL) >>= printFun varnames [] [] (NLL Gaussian))
                     _            -> helpCmd ["pareto"]
 
 --countPatCmd :: [String] -> Repl ()
 countPatCmd varnames []   = helpCmd ["count-pattern"]
-countPatCmd varnames args = run (CountPat (unwords args)) >>= printFun varnames [] [] Gaussian
+countPatCmd varnames args = run (CountPat (unwords args)) >>= printFun varnames [] [] (NLL Gaussian)
 
 --saveCmd :: [String] -> Repl ()
 saveCmd varnames [] = helpCmd ["save"]
-saveCmd varnames args = run (Save (unwords args)) >>= printFun varnames [] [] Gaussian
+saveCmd varnames args = run (Save (unwords args)) >>= printFun varnames [] [] (NLL Gaussian)
 
 --loadCmd :: [String] -> Repl ()
 loadCmd varnames [] = helpCmd ["load"]
-loadCmd varnames args = run (Load (unwords args)) >>= printFun varnames [] [] Gaussian
+loadCmd varnames args = run (Load (unwords args)) >>= printFun varnames [] [] (NLL Gaussian)
 
 --importCmd :: Distribution -> String -> [String] -> Repl ()
 importCmd varnames dist varnames' (fname:params:_) = run (Import fname dist varnames' (Prelude.read params)) >>= printFun varnames [] [] dist
@@ -168,14 +171,36 @@ importCmd varnames dist varnames' _   = helpCmd ["import"]
 
 distTokensCmd varnames [] = helpCmd ["distribution-tokens"]
 distTokensCmd varnames (arg:_) = case readMaybe arg of
-                          Just n -> run (DistTokens n) >>= printFun varnames [] [] Gaussian
+                          Just n -> run (DistTokens n) >>= printFun varnames [] [] (NLL Gaussian)
                           Nothing -> helpCmd ["distribution-tokens"]
 
 extractPatCmd varnames args = case readMaybe @Int (head args) of
     Nothing -> pure "The id must be an integer."
-    Just n  -> run (ExtractPat n) >>= printFun varnames [] [] Gaussian
+    Just n  -> run (ExtractPat n) >>= printFun varnames [] [] (NLL Gaussian)
 
-commands = ["help", "top", "report", "optimize", "eqsat", "getNExprs", "subtrees", "insert", "count-pattern", "distribution", "modularity", "pareto", "save", "load", "import", "extract-pattern", "distribution-tokens"]
+persistCmd varnames [] = helpCmd ["persist"]
+persistCmd varnames args = run (Persist (unwords args)) >>= printFun varnames [] [] (NLL Gaussian)
+
+dbLoadCmd varnames [] = helpCmd ["db-load"]
+dbLoadCmd varnames args = run (LoadDB (unwords args)) >>= printFun varnames [] [] (NLL Gaussian)
+
+dbTopCmd varnames (fname:n:_) = case readMaybe @Int n of
+                                    Nothing -> pure "The n must be an integer."
+                                    Just k  -> run (DBTop fname k) >>= printFun varnames [] [] (NLL Gaussian)
+dbTopCmd varnames _ = helpCmd ["db-top"]
+
+dbDistCmd varnames (fname:n:_) = case readMaybe @Int n of
+                                    Nothing -> pure "The n must be an integer."
+                                    Just k  -> run (DBDist fname k) >>= printFun varnames [] [] (NLL Gaussian)
+dbDistCmd varnames _ = helpCmd ["db-distribution"]
+
+dbCountCmd varnames (fname:op:_) = run (DBCount fname op) >>= printFun varnames [] [] (NLL Gaussian)
+dbCountCmd varnames _ = helpCmd ["db-count"]
+
+dbParetoCmd varnames (fname:_) = run (DBPareto fname) >>= printFun varnames [] [] (NLL Gaussian)
+dbParetoCmd varnames _ = helpCmd ["db-pareto"]
+
+commands = ["help", "top", "report", "optimize", "eqsat", "getNExprs", "subtrees", "insert", "count-pattern", "distribution", "modularity", "pareto", "save", "load", "import", "extract-pattern", "distribution-tokens", "getNEclasses", "persist", "db-load", "db-top", "db-distribution", "db-count", "db-pareto"]
 
 topHlp = "top N [FILTER...] [CRITERIA] [[not] matching [root] PATTERN] \n \
          \ \n \
@@ -255,6 +280,13 @@ hlpMap = Map.fromList $ Prelude.zip commands
                             , "load FILE: load current e-graph from a file named FILE."
                             , "displays the disbution of tokens"
                             , "extract the patterns from a single expression"
+                            , "extract list of e-classes for N equivalnt expressions"
+                            , "persist FILE: save the current e-graph to the SQLite database FILE."
+                            , "db-load FILE: load an e-graph previously persisted in the SQLite database FILE."
+                            , "db-top FILE N: top-N e-classes by fitness queried from the SQLite database FILE."
+                            , "db-distribution FILE N: number of evaluated e-classes per model size (size <= N) from the SQLite database FILE."
+                            , "db-count FILE OP: number of e-classes containing an e-node with operator OP (e.g. EAdd, EMul, LogAbs) from the SQLite database FILE."
+                            , "db-pareto FILE: Pareto front over (fitness, dl) from the SQLite database FILE."
                             ]
 
 -- Evaluation
@@ -267,7 +299,7 @@ cmd cmdMap input = do let (cmd':args) = words input
 helpCmd xs = pure $ hlpMap Map.! (head xs)
 
 reggression myCmd dataset testData loss' loadFrom dumpTo parseCSV' parseParams calcDL calcFit varnames = do
-  let loss        = fromJust $ readMaybe loss'
+  let loss        = fromJust $ readLoss loss'
       args = Args dataset testData loss dumpTo loadFrom parseCSV' parseParams calcDL calcFit
 
   g <- getStdGen
@@ -306,6 +338,13 @@ reggression myCmd dataset testData loss' loadFrom dumpTo parseCSV' parseParams c
              , importCmd varnames loss varnames'
              , extractPatCmd varnames
              , distTokensCmd varnames
+             , getNEclassesCmd varnames
+             , persistCmd varnames
+             , dbLoadCmd varnames
+             , dbTopCmd varnames
+             , dbDistCmd varnames
+             , dbCountCmd varnames
+             , dbParetoCmd varnames
              ]
       cmdMap = Map.fromList $ Prelude.zip commands funs
 

@@ -6,17 +6,19 @@ module Util where
 import Control.Lens ( over )
 
 import qualified Data.Map.Strict as Map
-import Data.Massiv.Array as MA hiding (forM_, forM)
+import qualified Data.HashMap.Strict as HM
+import qualified Data.Vector.Unboxed as VU
 import Data.SRTree
 import Data.SRTree.Eval
-import Algorithm.SRTree.Opt
 import Algorithm.EqSat.Egraph
 import Algorithm.EqSat.Build
 import Algorithm.EqSat.Info
 import Algorithm.EqSat ( recalculateBest )
-import qualified Data.Sequence as FingerTree
+import qualified Data.Set as Set
 
 import Algorithm.SRTree.NonlinearOpt
+import Algorithm.SRTree.AD ( ADBackEnd (..) )
+import Numeric.Optimization.NLOPT ( LocalAlgorithm ( VAR1 ) )
 import System.Random
 import Data.SRTree.Random hiding (randomVec,randomRange)
 import Algorithm.SRTree.Likelihoods
@@ -48,7 +50,7 @@ import Text.Layout.Table.Cell.Formatted
 import Text.Layout.Table.Cell
 import System.Console.ANSI.Codes
 
-data Info = Info {_training :: DataSet, _test :: DataSet, _dist :: Distribution}
+data Info = Info {_training :: DataSet, _test :: DataSet, _dist :: Loss}
 type MyEGraph = StateT EGraph IO
 --type Repl = HaskelineT (StateT EGraph (StateT StdGen IO))
 type Repl = HaskelineT (StateT EGraph IO)
@@ -63,18 +65,18 @@ maxVar = cata alg
     alg (Bin _ l r) = max l r
     alg (Uni _ t) = t
 
-fitnessFun :: Int -> Distribution -> DataSet -> Fix SRTree -> PVector -> (Double, PVector)
-fitnessFun nIter distribution (x, y, mYErr) _tree thetaOrig =
+fitnessFun :: Int -> Loss -> DataSet -> Fix SRTree -> Target -> (Double, Target)
+fitnessFun nIter loss (x, y, mYErr) _tree thetaOrig =
   if n <= nVars || isNaN tr
     then (-(1/0), thetaOrig) -- infinity
     else (tr, theta)
   where
-    (Sz2 _ n)     = MA.size x
-    nVars         = maxVar _tree
-    tree          = relabelParams _tree
-    nParams       = countParams tree + if distribution == ROXY then 3 else if distribution == Gaussian then 1 else 0
-    (theta, _, _) = minimizeNLL' VAR1 distribution mYErr nIter x y tree thetaOrig
-    evalF a b c   = negate $ nll distribution c a b tree $ if nParams == 0 then thetaOrig else theta
+    n         = length x
+    nVars     = maxVar _tree
+    tree      = relabelParams _tree
+    nParams   = countParams tree + if loss == NLL ROXY then 3 else if loss == NLL Gaussian then 1 else 0
+    (theta, _, _) = minimizeNLL' VAR1 MultiThread loss mYErr nIter x y tree thetaOrig
+    evalF a b c   = negate $ compileLoss a (buildLoss loss (fromIntegral (VU.length b)) tree) b c $ if nParams == 0 then thetaOrig else theta
     tr            = evalF x y mYErr
 
 
@@ -85,26 +87,76 @@ randomRange :: (Ord val, Random val) => (val, val) -> IO val
 randomRange rng = (randomRIO rng)
 {-# INLINE randomRange #-}
 
-randomVec :: Int -> IO PVector
-randomVec n = MA.fromList compMode <$> replicateM n (randomRange (-1, 1))
+randomVec :: Int -> IO Target
+randomVec n = VU.replicateM n (randomRange (-1, 1))
 
-fitnessFunRep :: Int -> Distribution -> DataSet -> Fix SRTree -> MyEGraph (Double, PVector)
-fitnessFunRep nIter distribution dataTrain _tree = do
+fitnessFunRep :: Int -> Loss -> DataSet -> Fix SRTree -> MyEGraph (Double, Target)
+fitnessFunRep nIter loss dataTrain _tree = do
     let tree = relabelParams _tree
-        nParams = countParams tree + if distribution == ROXY then 3 else if distribution == Gaussian then 1 else 0
+        nParams = countParams tree + if loss == NLL ROXY then 3 else if loss == NLL Gaussian then 1 else 0
 
     thetaOrigs <- lift (randomVec nParams)
     --lift $ print thetaOrigs
-    pure (fitnessFun nIter distribution dataTrain tree thetaOrigs)
+    pure (fitnessFun nIter loss dataTrain tree thetaOrigs)
 {-# INLINE fitnessFunRep #-}
+
+-- | `createDB` creates a database of patterns from the e-nodes of the e-graph
+createDB :: Monad m => EGraphST m DB
+createDB = do modify' $ over (eDB . patDB) (const Map.empty)
+              ecls <- gets (HM.toList . _eNodeToEClass)
+              mapM_ (uncurry addToDB) ecls
+              gets (_patDB . _eDB)
+{-# INLINE createDB #-}
+
+-- | `createDBBest` creates a database of patterns from the best e-node of
+-- every e-class
+createDBBest :: Monad m => EGraphST m DB
+createDBBest = do modify' $ over (eDB . patDB) (const Map.empty)
+                  ecls <- gets (Prelude.map (\(eId, ec) -> (_best (_info ec), eId)) . IM.toList . _eClass)
+                  mapM_ (uncurry addToDB) ecls
+                  gets (_patDB . _eDB)
+{-# INLINE createDBBest #-}
+
+-- | mean squared error of a fitted model
+mseMetric :: Columns -> Target -> Fix SRTree -> Target -> Double
+mseMetric xss ys tree theta =
+  compileLoss xss (buildLoss MSE (fromIntegral n) tree) ys Nothing theta
+  where n = VU.length ys
+{-# INLINE mseMetric #-}
+
+-- | coefficient of determination of a fitted model
+r2Metric :: Columns -> Target -> Fix SRTree -> Target -> Double
+r2Metric xss ys tree theta = 1 - sse / sseTot
+  where
+    m      = VU.length ys
+    sse    = fromIntegral m * mseMetric xss ys tree theta
+    ym     = VU.sum ys / fromIntegral m
+    sseTot = VU.sum (VU.map (\yi -> (yi - ym) ^ (2 :: Int)) ys)
+{-# INLINE r2Metric #-}
+
+-- | negative log-likelihood (or raw loss for non-NLL 'Loss') of a fitted model
+nllMetric :: Loss -> Maybe Target -> Columns -> Target -> Fix SRTree -> Target -> Double
+nllMetric loss mYerr xss ys tree theta =
+  compileLoss xss (buildLoss loss (fromIntegral n) tree) ys mYerr theta
+  where n = VU.length ys
+{-# INLINE nllMetric #-}
+
+-- | MDL criterion of a fitted model
+mdlMetric :: Loss -> Maybe Target -> Columns -> Target -> Target -> Fix SRTree -> Double
+mdlMetric loss mYerr xss ys theta tree =
+  nllMetric loss mYerr xss ys tree theta + logFunctional tree + logParameters fisher theta
+  where
+    dist   = case loss of NLL d -> d; _ -> LeastSquares
+    fisher = fisherNLL dist mYerr xss ys tree theta
+{-# INLINE mdlMetric #-}
 
 mvFun fun thetas datasets = Prelude.map (\(theta, (x,y,e)) -> fun x y e theta)
                           $ Prelude.zip thetas datasets
 
 bold s = formatted (setSGRCode [SetConsoleIntensity BoldIntensity]) (plain s) (setSGRCode [Reset])
 
-printExpr :: [String] -> [DataSet] -> [DataSet] -> Distribution -> EClassId -> MyEGraph String
-printExpr varnames dataTrain dataTest distribution ec = do
+printExpr :: [String] -> [DataSet] -> [DataSet] -> Loss -> EClassId -> MyEGraph String
+printExpr varnames dataTrain dataTest loss ec = do
         cec <- canonical ec
         thetas <- getTheta ec
 
@@ -114,12 +166,11 @@ printExpr varnames dataTrain dataTest distribution ec = do
             best'       = relabelParams bestExpr
             showFun     = show
 
-            mseMV x y e theta = showFun $ mse x y best' theta
-            r2MV  x y e theta = showFun $ r2 x y best' theta
-            nllMV x y e theta = showFun $ nll distribution e x y best' theta
-            mdlMV x y e theta = showFun $ mdl distribution e x y theta best'
+            mseMV x y e theta = showFun $ mseMetric x y best' theta
+            r2MV  x y e theta = showFun $ r2Metric x y best' theta
+            nllMV x y e theta = showFun $ nllMetric loss e x y best' theta
+            mdlMV x y e theta = showFun $ mdlMetric loss e x y theta best'
 
-            -- expr        = paramsToConst (MA.toList theta) best'
             mse_trains  = intercalate "; " $ mvFun mseMV thetas dataTrain
             mse_tes     = intercalate "; " $ mvFun mseMV thetas dataTest
             r2_trains   = intercalate "; " $ mvFun r2MV thetas dataTrain
@@ -128,9 +179,9 @@ printExpr varnames dataTrain dataTest distribution ec = do
             nll_tes     = intercalate "; " $ mvFun nllMV thetas dataTest
             mdl_trains  = intercalate "; " $ mvFun mdlMV thetas dataTrain
             mdl_tes     = intercalate "; " $ mvFun mdlMV thetas dataTest
-            thetaStr    = intercalate "; " $ Prelude.map (intercalate ", " . Prelude.map show . MA.toList) thetas
+            thetaStr    = intercalate "; " $ Prelude.map (intercalate ", " . Prelude.map show . VU.toList) thetas
             showExprFun = if null varnames then showExpr else showExprWithVars varnames
-        insertDL ec $ Prelude.maximum $ Prelude.map (\(theta, (x, y, mYerr)) -> mdl distribution mYerr x y theta best') $ Prelude.zip thetas dataTrain
+        insertDL ec $ Prelude.maximum $ Prelude.map (\(theta, (x, y, mYerr)) -> mdlMetric loss mYerr x y theta best') $ Prelude.zip thetas dataTrain
 
         pure $ "Info,Training,Test\n"
                <> "Id," <> show cec <> ",\n"
@@ -143,7 +194,7 @@ printExpr varnames dataTrain dataTest distribution ec = do
                <> intercalate "," ["nll", nll_trains, nll_tes] <> "\n"
                <> intercalate "," ["DL",  mdl_trains, mdl_tes] <> "\n"
 
-printExprCLI dataTrain dataTest distribution ec = do
+printExprCLI dataTrain dataTest loss ec = do
         thetas <- getTheta ec
 
         bestExpr <- getBestExpr ec
@@ -152,12 +203,11 @@ printExprCLI dataTrain dataTest distribution ec = do
             best'       = relabelParams bestExpr
             showFun     = printf "%.4e"
 
-            mseMV x y e theta = showFun $ mse x y best' theta
-            r2MV  x y e theta = showFun $ r2 x y best' theta
-            nllMV x y e theta = showFun $ nll distribution e x y best' theta
-            mdlMV x y e theta = showFun $ mdl distribution e x y theta best'
+            mseMV x y e theta = showFun $ mseMetric x y best' theta
+            r2MV  x y e theta = showFun $ r2Metric x y best' theta
+            nllMV x y e theta = showFun $ nllMetric loss e x y best' theta
+            mdlMV x y e theta = showFun $ mdlMetric loss e x y theta best'
 
-            -- expr        = paramsToConst (MA.toList theta) best'
             mse_trains  = intercalate "; " $ mvFun mseMV thetas dataTrain
             mse_tes     = intercalate "; " $ mvFun mseMV thetas dataTest
             r2_trains   = intercalate "; " $ mvFun r2MV thetas dataTrain
@@ -166,8 +216,8 @@ printExprCLI dataTrain dataTest distribution ec = do
             nll_tes     = intercalate "; " $ mvFun nllMV thetas dataTest
             mdl_trains  = intercalate "; " $ mvFun mdlMV thetas dataTrain
             mdl_tes     = intercalate "; " $ mvFun mdlMV thetas dataTest
-            thetaStr    = intercalate "; " $ Prelude.map (intercalate ", " . Prelude.map show . MA.toList) thetas
-        insertDL ec $ Prelude.maximum $ Prelude.map (\(theta, (x, y, mYerr)) -> mdl distribution mYerr x y theta best') $ Prelude.zip thetas dataTrain
+            thetaStr    = intercalate "; " $ Prelude.map (intercalate ", " . Prelude.map show . VU.toList) thetas
+        insertDL ec $ Prelude.maximum $ Prelude.map (\(theta, (x, y, mYerr)) -> mdlMetric loss mYerr x y theta best') $ Prelude.zip thetas dataTrain
 
 
         io . putStr $ "Evaluation metrics for expression (" <> (show ec) <> "): "
@@ -201,7 +251,7 @@ printsimpleExpr varnames eid m = do
                 Just f  -> showFun f
        p' = case p of
               [] -> "NA"
-              pss -> intercalate "|" $ Prelude.map (\ps -> "[" <> intercalate ", " (Prelude.map show (MA.toList ps)) <> "]") pss
+              pss -> intercalate "|" $ Prelude.map (\ps -> "[" <> intercalate ", " (Prelude.map show (VU.toList ps)) <> "]") pss
        dl' = case dl of
               Nothing -> "NA"
               Just d  -> showFun d
@@ -222,7 +272,7 @@ printsimpleExprCLI eid m = do
                 Just f  -> showFun f
        p' = case p of
               [] -> "NA"
-              pss -> intercalate "|" $ Prelude.map (\ps -> "[" <> intercalate ", " (Prelude.map show (MA.toList ps)) <> "]") pss
+              pss -> intercalate "|" $ Prelude.map (\ps -> "[" <> intercalate ", " (Prelude.map show (VU.toList ps)) <> "]") pss
        dl' = case dl of
               Nothing -> "NA"
               Just d  -> showFun d
@@ -248,6 +298,11 @@ printCounts (pat, (cnt, avgfit)) = do
     showPat (Fixed (Bin op l r)) = concat ["(", showPat l, " ", showOp op, " ", showPat r, ")"]
     showPat (Fixed (Uni f t)) = concat [show f, "(", showPat t, ")"]
     showPat (VarPat ix) = 'v' : show (fromEnum ix-65)
+    showPat (NAry op ncs) = "(" <> intercalate (" " <> showOp (toOp op) <> " ") (Prelude.map showNChild ncs) <> ")"
+    showPat Hole          = "_"
+    showNChild (Ch p)     = showPat p
+    showNChild (Rest c)   = 'v' : show (fromEnum c-65)
+    showNChild (MapP p _) = showPat p
 
 printCountsCLI (pat, (cnt, avgfit)) = do
   let spat = showPat pat
@@ -259,9 +314,17 @@ printCountsCLI (pat, (cnt, avgfit)) = do
     showPat (Fixed (Bin op l r)) = concat ["(", showPat l, " ", showOp op, " ", showPat r, ")"]
     showPat (Fixed (Uni f t)) = concat [show f, "(", showPat t, ")"]
     showPat (VarPat ix) = 'v' : show (fromEnum ix-65)
+    showPat (NAry op ncs) = "(" <> intercalate (" " <> showOp (toOp op) <> " ") (Prelude.map showNChild ncs) <> ")"
+    showPat Hole          = "_"
+    showNChild (Ch p)     = showPat p
+    showNChild (Rest c)   = 'v' : show (fromEnum c-65)
+    showNChild (MapP p _) = showPat p
 
+--printSimpleMultiExprs varnames eids =
+--  do rows <- forM (nub eids) (uncurry (printsimpleExpr varnames))
+--     pure . intercalate "\n" $ (headerSimple:rows)
 printSimpleMultiExprs varnames eids =
-  do rows <- forM (nub eids) (uncurry (printsimpleExpr varnames))
+  do rows <- forM eids (uncurry (printsimpleExpr varnames))
      pure . intercalate "\n" $ (headerSimple:rows)
 
 printSimpleMultiExprsCLI eids =
@@ -284,6 +347,10 @@ printMultiCountsCLI cnts =
   do rows <- forM cnts printCountsCLI
      io.putStrLn $ tableString (columnHeaderTableS [fixedLeftCol 50, numCol, numCol] unicodeS headerCountCLI rows)
 
+printEClasses eids =
+  do let rows = Prelude.map show eids -- forM eids Prelude.show
+     io $ print eids
+     pure . intercalate "\n" $ ("e-classes" : rows)
 
 headerSimple = intercalate "," ["Id", "Expression", "Numpy", "Latex", "Fitness", "Parameters", "Size", "DL"]
 headerCount = intercalate "," ["Pattern", "Count", "AvgFit"]
@@ -310,6 +377,10 @@ showModules varnames m latex = forM (IM.toList m) showSingleModule
 showModular :: Monad m => [String] -> IM.IntMap (Int, Int) -> EClassId -> Bool -> EGraphST m String
 showModular varnames mNames eid' latex = fst <$> go eid' 0
   where
+    goList [] ix = pure ([], ix)
+    goList (c:cs) ix = do (s, ix') <- go c ix
+                          (ss, ix'') <- goList cs ix'
+                          pure (s:ss, ix'')
     go id' thetaIx = do
       eid <- canonical id'
       let mResult = mNames IM.!? eid
@@ -387,14 +458,16 @@ showModular varnames mNames eid' latex = fst <$> go eid' 0
             do ec <- canonical ec'
                best <- gets (_best . _info . (IM.! ec) . _eClass) >>= canonize
                case best of
-                  Var   ix -> pure (showVar ix, thetaIx)
-                  Param ix -> pure (showParam thetaIx, thetaIx + 1)
-                  Const  x -> pure (show x, thetaIx)
-                  Uni g  t -> do (t', thetaIx') <- go t thetaIx
-                                 pure (showFun g t', thetaIx')
-                  Bin op l r -> do (l', thetaIx') <- go l thetaIx
-                                   (r', thetaIx'') <- go r thetaIx'
-                                   pure (showOp op l' r', thetaIx'')
+                  EVar   ix -> pure (showVar ix, thetaIx)
+                  EParam ix -> pure (showParam thetaIx, thetaIx + 1)
+                  EConst  x -> pure (show x, thetaIx)
+                  EUni g  t -> do (t', thetaIx') <- go t thetaIx
+                                  pure (showFun g t', thetaIx')
+                  EBin op l r -> do (l', thetaIx') <- go l thetaIx
+                                    (r', thetaIx'') <- go r thetaIx'
+                                    pure (showOp op l' r', thetaIx'')
+                  ENAry op xs -> do (ss, thetaIx') <- goList (expandedList xs) thetaIx
+                                    pure (if null ss then "" else foldl1 (showOp (toOp op)) ss, thetaIx')
 
 showLatexTree :: Monad m => [String] -> Fix SRTree -> EGraphST m String
 showLatexTree varnames = showNormal
@@ -453,40 +526,40 @@ showLatexTree varnames = showNormal
                                    r' <- showNormal r
                                    pure (showOp op l' r')
 
-fillDL dist datasets = do
+fillDL loss datasets = do
   ecs <- getAllEvaluatedEClasses
   let (x', _, _) = head datasets
-      (Sz2 _ n)     = MA.size x'
+      n          = length x'
   forM_ ecs $ \ec -> do
     thetas <- getTheta ec
     bestExpr <- relabelParams <$> getBestExpr ec
     let nVars = maxVar bestExpr
-    if MA.size (head thetas) /= countParams bestExpr || n <= nVars
+    if VU.length (head thetas) /= countParams bestExpr || n <= nVars
        then (lift . putStrLn) $ "Wrong number of parameters in " <> showExpr bestExpr <> ": " <> show (head thetas) <> "   " <> show ec
-       else do let mdl_trains = Prelude.map (\(theta, (x, y, mYerr)) -> mdl dist mYerr x y theta bestExpr) $ Prelude.zip thetas datasets
+       else do let mdl_trains = Prelude.map (\(theta, (x, y, mYerr)) -> mdlMetric loss mYerr x y theta bestExpr) $ Prelude.zip thetas datasets
                insertDL ec $ Prelude.maximum mdl_trains
 
-fillFit dist trainDatas = do
+fillFit loss trainDatas = do
   ecs <- getAllEvaluatedEClasses
   cleanAllDBs
   let (x', _, _) = head trainDatas
-      (Sz2 _ n)     = MA.size x'
+      n          = length x'
   forM_ ecs $ \ec -> do
     unsetFitness ec
     t <- relabelParams <$> getBestExpr ec
     let nVars = maxVar t
-    response <- forM trainDatas $ \dt -> if n <= nVars then pure (-1.0/0.0, MA.fromList MA.Seq []) else fitnessFunRep 50 dist dt t
+    response <- forM trainDatas $ \dt -> if n <= nVars then pure (-1.0/0.0, VU.empty) else fitnessFunRep 50 loss dt t
     let f      = Prelude.minimum (Prelude.map fst response)
         thetas = Prelude.map snd response
     insertFitness ec f thetas
-    let mdl_train  = if isInfinite f then (1.0/0.0) else Prelude.maximum $ Prelude.map (\(theta, (x, y, mYErr)) -> mdl dist mYErr x y theta t) $ Prelude.zip thetas trainDatas
+    let mdl_train  = if isInfinite f then (1.0/0.0) else Prelude.maximum $ Prelude.map (\(theta, (x, y, mYErr)) -> mdlMetric loss mYErr x y theta t) $ Prelude.zip thetas trainDatas
     insertDL ec mdl_train
 
 
 cleanAllDBs = do
-  modify' $ over (eDB . fitRangeDB) (const FingerTree.Empty)
+  modify' $ over (eDB . fitRangeDB) (const Set.empty)
           . over (eDB . sizeFitDB) (const IM.empty)
-          . over (eDB . dlRangeDB) (const FingerTree.Empty)
+          . over (eDB . dlRangeDB) (const Set.empty)
           . over (eDB . sizeDLDB) (const IM.empty)
 
 unsetFitness :: Monad m => EClassId -> EGraphST m ()

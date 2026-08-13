@@ -18,7 +18,7 @@ from ._binding import (
     unsafe_hs_reggression_exit,
 )
 
-VERSION: str = "1.0.10"
+VERSION: str = "1.0.11"
 
 
 _hs_rts_init: bool = False
@@ -136,7 +136,7 @@ class Reggression():
         self.tempname = self.temp_file.name
         self.temp_file.close()
         print("Calculating DL...")
-        reggression_run("top 10", self.dataset, self.testData, self.loss, self.loadFrom, self.tempname, self.parseCSV, self.parseParams, 1, self.refit, self.varnames)
+        reggression_run("top 10", self.dataset, self.testData, self.loss, self.loadFrom, self.tempname, self.parseCSV, self.parseParams, self.refit, self.refit, self.varnames)
         print("Welcome to r🥚ression")
     def __del__(self):
         ''' remove temporary e-graph file before ending the program '''
@@ -396,6 +396,72 @@ class Reggression():
             Filename
         '''
         return self.runQuery(f"load {fname}", df=False)
+    def persist(self, fname):
+        ''' Save the current e-graph to the SQLite database file fname
+        (srtree-db). A later db-top/db-distribution/db-count/db-pareto on the
+        same file runs the query directly in SQLite.
+
+        Parameters
+        ----------
+        fname : str
+            SQLite database filename
+        '''
+        return self.runQuery(f"persist {fname}", df=False)
+    def loadDB(self, fname):
+        ''' Load an e-graph previously persisted with `persist` into memory.
+
+        Parameters
+        ----------
+        fname : str
+            SQLite database filename
+        '''
+        return self.runQuery(f"db-load {fname}", df=False)
+    def dbTop(self, fname, n=5):
+        ''' Top-n e-classes by fitness queried directly from the SQLite
+        database fname (no in-memory pattern enumeration).
+
+        Parameters
+        ----------
+        fname : str
+            SQLite database filename
+        n : int, default=5
+            Number of e-classes
+        '''
+        return self.runQuery(f"db-top {fname} {n}")
+    def dbDistribution(self, fname, maxSize=100):
+        ''' Number of evaluated e-classes per model size (size <= maxSize),
+        queried from the SQLite database fname.
+
+        Parameters
+        ----------
+        fname : str
+            SQLite database filename
+        maxSize : int, default=100
+            Maximum model size included
+        '''
+        return self.runQuery(f"db-distribution {fname} {maxSize}")
+    def dbCount(self, fname, op):
+        ''' Number of e-classes containing an e-node with operator `op`
+        (e.g. "EAdd", "EMul", "LogAbs"), queried from the SQLite database fname.
+
+        Parameters
+        ----------
+        fname : str
+            SQLite database filename
+        op : str
+            Operator detail string
+        '''
+        return self.runQuery(f"db-count {fname} {op}", df=False)
+    def dbPareto(self, fname):
+        ''' Pareto front over (max fitness, min dl) queried from the SQLite
+        database fname.
+
+        Parameters
+        ----------
+        fname : str
+            SQLite database filename
+        '''
+        return self.runQuery(f"db-pareto {fname}")
     def importFromCSV(self, fname, extractParameters=True):
         ''' import equations from a CSV file
         IMPORTANT: the extension of the CSV file must match the source
@@ -410,3 +476,6 @@ class Reggression():
             whether to convert floating points in the expression to parameters
         '''
         return self.runQuery(f"import {fname} {extractParameters}", df=False)
+
+    def getNEclasses(self, eid, n=10):
+        return self.runQuery(f"getNEclasses {n} {eid}")

@@ -5,6 +5,7 @@ module Commands where
 
 import Control.Applicative ((<|>))
 import Data.Attoparsec.ByteString.Char8 hiding ( match )
+import Data.Attoparsec.Expr
 import qualified Data.ByteString.Char8 as B
 import Data.Maybe
 import Text.Read ( readMaybe )
@@ -13,24 +14,28 @@ import qualified Data.IntMap.Strict as IntMap
 import qualified Data.IntSet as IntSet
 import Control.Monad.State.Strict
 import Control.Monad ( forM_, filterM, forM )
+import Control.Monad.IO.Class ( liftIO )
+import Control.Exception ( bracket )
 import Data.Char ( toUpper )
 import qualified Data.Map as Map
+import qualified Data.HashMap.Strict as HM
 import qualified Data.HashSet as Set
-import qualified Data.Massiv.Array as MA
-import Data.List ( nub, sortOn )
+import qualified Data.Vector.Unboxed as VU
+import Data.List ( nub, sortOn, intercalate )
 import Data.List.Split ( splitOn )
 import Control.Lens (over)
+
+import qualified Data.Text as T
 
 import Data.SRTree
 import Data.SRTree.Datasets
 import Data.SRTree.Recursion
 import Data.SRTree.Eval
 import Data.SRTree.Print hiding ( printExpr )
-import Text.ParseSR (SRAlgs(..), parseSR, parsePat, Output(..), showOutput)
+import Text.ParseSR (SRAlgs(..), parseSR, Output(..), showOutput)
 import System.Random
 
 import Algorithm.SRTree.Likelihoods
-import Algorithm.SRTree.Opt
 
 import Algorithm.EqSat
 import Algorithm.EqSat.Egraph
@@ -45,6 +50,10 @@ import Algorithm.EqSat.SearchSR hiding (fitnessFun, fitnessFunRep, fitnessMV)
 
 import Data.Binary ( encode, decode )
 import qualified Data.ByteString.Lazy as BS
+
+import Database.SQLite3 ( Database, open, close )
+import Algorithm.EqSat.Storage.SQLite ( saveGraph, loadGraph )
+import qualified Algorithm.EqSat.Storage.Query as Q
 
 import Util
 import Debug.Trace 
@@ -65,10 +74,18 @@ data Command  = Top Int Filter Criteria PatStr
               | ExtractPat EClassId
               | Save String
               | Load String
-              | Import String Distribution String Bool
+              | Persist String
+              | LoadDB String
+              | DBTop String Int
+              | DBDist String Int
+              | DBCount String String
+              | DBPareto String
+              | Import String Loss String Bool
               | EqSatStep Int ArgOpt
               | GetNExprs Int EClassId
               | Clean Int
+              | GetEClassIds Int
+              | GetNEclass Int Int
 
 type Filter = EClass -> Bool -- pattern?
 type FilterDist = Int -> Bool
@@ -76,7 +93,7 @@ data Criteria = ByFitness | ByDL deriving Eq
 data CriteriaDist = ByCount | ByAvgFit
 data Limit = Limit Int Bool deriving Show
 data PatStr = PatStr String Bool | AntiPatStr String Bool | NoPat
-type ArgOpt = (Distribution, [DataSet], [DataSet])
+type ArgOpt = (Loss, [DataSet], [DataSet])
 
 -- top 10 with <=10|=10 size with <=4 parameters by fitness|dl matching pat
 -- report id
@@ -138,6 +155,29 @@ parseModular = do n <- decimal
 
 parseLeast = stringCI "with at least " >> decimal 
 parseTopDist = stringCI "from top " >> decimal 
+
+-- * SQLite-backed commands (srtree-db)
+-- filename must not contain whitespace
+parseFname = takeWhile1 (\c -> c /= ' ' && c /= '\n')
+
+parsePersist = string "persist " *> (B.unpack <$> parseFname)
+parseLoadDB  = string "db-load " *> (B.unpack <$> parseFname)
+parseDBTop   = string "db-top " >>= \_ -> do
+  fname <- B.unpack <$> parseFname
+  stripSp
+  n <- decimal
+  pure (DBTop fname n)
+parseDBDist  = string "db-distribution " >>= \_ -> do
+  fname <- B.unpack <$> parseFname
+  stripSp
+  n <- decimal
+  pure (DBDist fname n)
+parseDBCount = string "db-count " >>= \_ -> do
+  fname <- B.unpack <$> parseFname
+  stripSp
+  op <- B.unpack <$> parseFname
+  pure (DBCount fname op)
+parseDBPareto = string "db-pareto " *> (DBPareto <$> (B.unpack <$> parseFname)) 
 parseCriteriaDL = (stringCI "by count" >> pure ByCount)
               <|> (stringCI "by fitness" >> pure ByAvgFit)
 
@@ -161,7 +201,7 @@ parseCost = stringCI "cost" >> pure (_cost . _info)
 parseParams = stringCI "parameters" >> pure (mbLen . _theta . _info)
    where
       mbLen [] = 0
-      mbLen ps = MA.unSz $ MA.size $ Prelude.head ps
+      mbLen ps = VU.length $ Prelude.head ps
 parseCmp = do op <- parseLEQ <|> parseLT <|> parseEQ <|> parseGEQ <|> parseGT
               stripSp
               n <- decimal
@@ -203,7 +243,83 @@ putEOL :: B.ByteString -> B.ByteString
 putEOL bs | B.last bs == '\n' = bs
           | otherwise         = B.snoc bs '\n'
 
-data PrintResults = MultiExprs [(EClassId, IntMap.IntMap (Int, Int))] | SingleExpr EClassId | Counts [(Pattern, (Int, Double))] | SimpleStr String | MultiTrees [Fix SRTree] | NoPrint
+-- * Pattern parser (previously exported by Text.ParseSR)
+
+type ParsePat = Parser Pattern
+
+-- | parses a string representing a pattern expression (e.g. @v0 * x0 + t0@).
+parsePat :: B.ByteString -> Either String Pattern
+parsePat = eitherResult . (`feed` "") . parse parsePatExpr . putEOL . B.strip
+
+parsePatExpr :: ParsePat
+parsePatExpr = parsePatternExpr (prefixOps : binOps) [] var
+  where
+    prefixOps = Prelude.map (uncurry prefix)
+                [ ("id", id), ("abs", abs)
+                  , ("sinh", sinh), ("cosh", cosh), ("tanh", tanh)
+                  , ("sin", sin), ("cos", cos), ("tan", tan)
+                  , ("asinh", asinh), ("acosh", acosh), ("atanh", atanh)
+                  , ("asin", asin), ("acos", acos), ("atan", atan)
+                  , ("sqrtabs", sqrtabs'), ("sqrt", sqrt), ("cbrt", cbrt'), ("square", (**2))
+                  , ("logabs", logabs'), ("log", log), ("exp", exp), ("cube", cube'), ("recip", recip')
+                  , ("Id", id), ("Abs", abs)
+                  , ("Sinh", sinh), ("Cosh", cosh), ("Tanh", tanh)
+                  , ("Sin", sin), ("Cos", cos), ("Tan", tan)
+                  , ("ASinh", asinh), ("ACosh", acosh), ("ATanh", atanh)
+                  , ("ASin", asin), ("ACos", acos), ("ATan", atan)
+                  , ("SqrtAbs", sqrtabs'), ("Sqrt", sqrt), ("Cbrt", cbrt'), ("Square", (**2))
+                  , ("LogAbs", logabs'), ("Log", log), ("Exp", exp), ("Recip", recip'), ("Cube", cube')
+                  , ("|log|", logabs'), ("|Log|", logabs'), ("|sqrt|", sqrtabs'), ("|Sqrt|", sqrtabs')
+                  , ("√", sqrt), ("|√|", sqrtabs')
+                ]
+    binOps = [[binary "^" (**) AssocLeft], [binary "**" (**) AssocLeft]
+            , [binary "*" (*) AssocLeft, binary "/" (/) AssocLeft]
+            , [binary "+" (+) AssocLeft, binary "-" (-) AssocLeft]
+            , [binary "|**|" powabs AssocLeft], [binary "|^|" powabs AssocLeft]
+            , [binary "aq" aq AssocLeft], [binary "|/|" aq AssocLeft]
+            ]
+    powabs l r  = Fixed $ Bin PowerAbs l r
+    aq l r      = Fixed $ Bin AQ l r
+    logabs' t   = Fixed $ Uni LogAbs t
+    sqrtabs' t  = Fixed $ Uni SqrtAbs t
+    cbrt' t     = Fixed $ Uni Cbrt t
+    cube' t     = Fixed $ Uni Cube t
+    recip' t    = Fixed $ Uni Recip t
+
+    var = do char 'x'
+             ix <- decimal
+             pure $ Fixed $ Var ix
+          <|> do char 't'
+                 ix <- decimal
+                 pure $ Fixed $ Param ix
+          <|> do char 'v'
+                 ix <- decimal
+                 pure $ VarPat (toEnum $ ix+65)
+          <?> "var"
+
+-- | Creates a parser for a binary operator
+binary :: B.ByteString -> (a -> a -> a) -> Assoc -> Operator B.ByteString a
+binary name fun  = Infix (do{ string (B.cons ' ' (B.snoc name ' ')) <|> string name; pure fun })
+
+-- | Creates a parser for a unary function
+prefix :: B.ByteString -> (a -> a) -> Operator B.ByteString a
+prefix  name fun = Prefix (do{ string name; pure fun })
+
+-- | Envelopes the parser in parens
+parens :: Parser a -> Parser a
+parens e = do{ string "("; e' <- e; string ")"; pure e' } <?> "parens"
+
+parsePatternExpr :: [[Operator B.ByteString Pattern]] -> [ParsePat -> ParsePat] -> ParsePat -> ParsePat
+parsePatternExpr table binFuns var =
+    do e <- expr
+       many1' space
+       pure e
+  where
+    term  = parens expr <|> choice (Prelude.map ($ expr) binFuns) <|> coef <|> var <?> "term"
+    expr  = buildExpressionParser table term
+    coef  = Fixed . Const <$> signed double <?> "const"
+
+data PrintResults = MultiExprs [(EClassId, IntMap.IntMap (Int, Int))] | SingleExpr EClassId | Counts [(Pattern, (Int, Double))] | SimpleStr String | MultiTrees [Fix SRTree] | MultiClass [[EClassId]] | NoPrint
                   -- deriving (Show)
 
 -- running
@@ -286,7 +402,7 @@ run (Optimize eid nIters (dist, trainDatas, testData)) = do -- dist trainData te
    let f = Prelude.minimum (Prelude.map fst response)
        thetas = Prelude.map snd response
    insertFitness eid f thetas
-   let mdl_train  = Prelude.maximum $ Prelude.map (\(theta, (x, y, mYErr)) -> mdl dist mYErr x y theta t) $ Prelude.zip thetas trainDatas
+   let mdl_train  = Prelude.maximum $ Prelude.map (\(theta, (x, y, mYErr)) -> mdlMetric dist mYErr x y theta t) $ Prelude.zip thetas trainDatas
    insertDL eid mdl_train
    pure . MultiExprs $ [(eid, IntMap.empty)]
    --printSimpleMultiExprs isCLI [eid]
@@ -298,10 +414,11 @@ run (Insert expr argOpt) = do
     Right tree -> do eid <- fromTree myCost tree
                      run (Optimize eid 100 argOpt)
 
-run (Subtrees eid) = do
+run (Subtrees eid') = do
+   eid <- canonical eid'
    isValid <- gets ((IntMap.member eid) . _eClass)
    if isValid
-     then do ids <- getAllChildBestEClasses eid
+     then do ids <- getAllChildBestEClassesRep eid
              pure . MultiExprs $ [(i, IntMap.empty) | i <- ids]
              --printSimpleMultiExprs isCLI ids
      else pure . SimpleStr $ "Invalid id."
@@ -335,6 +452,43 @@ run (Load fname) = do
   put (decode eg)
   pure NoPrint
 
+-- * SQLite-backed commands
+
+run (Persist fname) = do
+  eg <- get
+  r  <- liftIO $ withSQLite fname $ \db -> saveGraph db eg
+  pure . SimpleStr $ case r of
+    Left err -> "persist failed: " <> err
+    Right () -> "e-graph persisted to " <> fname
+
+run (LoadDB fname) = do
+  r <- liftIO $ withSQLite fname loadGraph
+  case r of
+    Left err -> pure . SimpleStr $ "db-load failed: " <> err
+    Right eg -> do put eg
+                   -- best/cost are not persisted in the db: recompute the
+                   -- cost-minimal best for every e-class (the database holds
+                   -- arbitrary nodes otherwise, which can explode when
+                   -- expanded for printing/pattern matching)
+                   recalculateBestAll myCost
+                   pure (SimpleStr ("e-graph loaded from " <> fname))
+
+run (DBTop fname n) = do
+  r <- liftIO $ withSQLite fname $ \db -> Q.topN db n
+  pure . MultiExprs $ [(eid, IntMap.empty) | (eid, _) <- r]
+
+run (DBDist fname n) = do
+  r <- liftIO $ withSQLite fname $ \db -> Q.distributionCounts db n
+  pure . SimpleStr . intercalate "\n" $ ("Size,Count" : [show s <> "," <> show c | (s, c) <- r])
+
+run (DBCount fname op) = do
+  c <- liftIO $ withSQLite fname $ \db -> Q.countPattern db (T.pack op)
+  pure . SimpleStr $ "e-classes containing " <> op <> ": " <> show c
+
+run (DBPareto fname) = do
+  r <- liftIO $ withSQLite fname $ \db -> Q.paretoBySize db
+  pure . SimpleStr . intercalate "\n" $ ("Id,Fitness,Size" : [show eid <> "," <> show f <> "," <> show s | (eid, f, s) <- r])
+
 run (Import fname dist varnames params) = do
   importCSV dist fname varnames params
   pure NoPrint
@@ -347,7 +501,7 @@ run (DistTokens n) = do
   pure . Counts $ (Map.toList allPats)
 
 run (ExtractPat eid) = do
-  pats <- getAllPatterns (const True) eid
+  pats <- getAllPatterns (<= 10) eid
   pure . Counts $ Prelude.map (\(p, c) -> (p, (c, 0))) $ Map.toList pats
 
 --run (EqSatStep n dataInfo) = do (forM rewrites $ \r -> runEqSat myCost [r] n) >> refitChanged dataInfo
@@ -360,11 +514,17 @@ run (EqSatStep n dataInfo) = do createDB
 
 run (GetNExprs n eid) = do ts <- getNExpressionsFrom n eid
                            pure $ MultiTrees ts
+
+run (GetNEclass n eid) = do ids <- getNEclassFrom n eid
+                            pure $ MultiClass ids -- $ [(i, IntMap.empty) | i <- ids]
 -- dataInfo = (dist, trainDatas, testData)
 --  runEqSat myCost rewrites 1
 
 -- * auxiliary functions
-importCSV :: Distribution -> String -> String -> Bool -> MyEGraph ()
+withSQLite :: FilePath -> (Database -> IO a) -> IO a
+withSQLite fname k = bracket (open (T.pack fname)) close k
+
+importCSV :: Loss -> String -> String -> Bool -> MyEGraph ()
 importCSV dist fname hdr convertParam = cleanDB >> parseEqs >> createDB >> rebuildAllRanges
   where
     alg = getFormat fname
@@ -390,12 +550,12 @@ importCSV dist fname hdr convertParam = cleanDB >> parseEqs >> createDB >> rebui
                                theta      = if convertParam then if dist==MSE then ps <> params else ps else params
                            eid <- fromTree myCost (relabelP0 tree) >>= canonical
                            -- TODO: how to import MvSR?
-                           insertFitness eid f $ [MA.fromList MA.Seq theta]
+                           insertFitness eid f $ [VU.fromList theta]
                            runEqSat myCost rewritesParams 1
                            cleanDB
 
 
-parseCSV :: Distribution -> String -> String -> Bool -> IO EGraph
+parseCSV :: Loss -> String -> String -> Bool -> IO EGraph
 parseCSV dist fname hdr convertParam = do g <- (execStateT parseEqs emptyGraph) -- `evalStateT` (mkStdGen 0)
                                           pure g
   where
@@ -415,7 +575,7 @@ parseCSV dist fname hdr convertParam = do g <- (execStateT parseEqs emptyGraph) 
                                theta      = if convertParam then if dist==MSE then ps <> params else ps else params
                            eid <- fromTree myCost tree >>= canonical
                            -- TODO: how to import MvSR?
-                           insertFitness eid f $ [MA.fromList MA.Seq theta]
+                           insertFitness eid f $ [VU.fromList theta]
                            runEqSat myCost rewritesParams 1
                            cleanDB
 getFormat :: String -> SRAlgs
@@ -458,7 +618,7 @@ getParentsOf p visited n queue =
       pure (visited <> grandParents)
    where
       filterUneval uneval = IntSet.filter (`IntSet.notMember` uneval)
-      isNew ec (e, en) = ec `Prelude.elem` (childrenOf en) && (e `IntSet.notMember` visited)
+      isNew ec (e, en) = ec `Prelude.elem` (eChildren en) && (e `IntSet.notMember` visited)
       canonizeParents ec = do ecl <- gets ((IntMap.! ec) . _eClass)
                               let parents' = Set.toList . Set.filter (isNew ec) $ _parents ecl
                               parents <- Prelude.map fst <$> filterM isBest parents'
@@ -515,32 +675,45 @@ getAllPatterns pSz eid = do
    eid' <- canonical eid
    best <- gets (_best . _info . (IntMap.! eid') . _eClass)
    case best of
-      Var ix     -> pure $ Map.fromList [(VarPat 'A', 1), (Fixed (Var ix), 1)]
-      Param ix   -> pure $ Map.fromList [(VarPat 'A', 1), (Fixed (Param ix), 1)]
-      Const x    -> pure $ Map.fromList [(VarPat 'A', 1), (Fixed (Const x), 1)]
-      Uni f t    -> do pats <- Map.filterWithKey (\k _ -> (pSz . lenPat) k) <$> getAllPatterns pSz t
-                       pure $ Map.insertWith (+) (VarPat 'A') 1 
-                            $ Map.mapKeysWith (+) (\t' -> Fixed (Uni f t')) pats
-      Bin op l r | l==r -> do pats <- Map.filterWithKey (\k _ -> (pSz . lenPat) k) <$> getAllPatterns pSz l
-                              pure $ Map.insertWith (+) (VarPat 'A') 1 $ Map.mapKeysWith (+) (\t' -> Fixed (Bin op t' t')) pats
+      EVar ix     -> pure $ Map.fromList [(VarPat 'A', 1), (Fixed (Var ix), 1)]
+      EParam ix   -> pure $ Map.fromList [(VarPat 'A', 1), (Fixed (Param ix), 1)]
+      EConst x    -> pure $ Map.fromList [(VarPat 'A', 1), (Fixed (Const x), 1)]
+      EUni f t    -> do pats <- Map.filterWithKey (\k _ -> (pSz . lenPat) k) <$> getAllPatterns pSz t
+                        pure $ Map.insertWith (+) (VarPat 'A') 1 
+                             $ Map.mapKeysWith (+) (\t' -> Fixed (Uni f t')) pats
+      EBin op l r | l==r -> do pats <- Map.filterWithKey (\k _ -> (pSz . lenPat) k) <$> getAllPatterns pSz l
+                               pure $ Map.insertWith (+) (VarPat 'A') 1 $ Map.mapKeysWith (+) (\t' -> Fixed (Bin op t' t')) pats
                   | otherwise -> do patsL <- Map.filterWithKey (\k _ -> (pSz . lenPat) k) <$> getAllPatterns pSz l
                                     patsR <- Map.filterWithKey (\k _ -> (pSz . lenPat) k) <$> getAllPatterns pSz r
                                     pure $ Map.fromList $ (VarPat 'A', 1) : [(relabelVarPat $ Fixed (Bin op l' r'), min vl vr) | (l', vl) <- Map.toList patsL, (r', vr) <- Map.toList patsR]
+      ENAry op xs -> do pats <- Prelude.mapM (\c -> filterPat pSz <$> getAllPatterns pSz c) (expandedList xs)
+                        pure $ Map.insertWith (+) (VarPat 'A') 1 $ combineAll pats
+                        where
+                          filterPat pSz' = Map.filterWithKey (\k _ -> (pSz' . lenPat) k)
+                          combineAll []     = Map.empty
+                          combineAll [p]    = p
+                          combineAll (p:ps) = filterPat pSz $ combineBin p (combineAll ps)
+                          combineBin pL pR  = Map.fromList
+                            [(relabelVarPat $ Fixed (Bin (toOp op) l' r'), min vl vr)
+                            | (l', vl) <- Map.toList pL, (r', vr) <- Map.toList pR]
 
 getAllTokens :: Monad m => EClassId -> EGraphST m (Map.Map Pattern Int)
 getAllTokens eid = do
   eid' <- canonical eid
   best <- gets (_best . _info . (IntMap.! eid') . _eClass)
   case best of
-    Var ix -> pure $ Map.singleton (Fixed (Var ix)) 1
-    Param ix -> pure $ Map.singleton (Fixed (Param ix)) 1
-    Const x -> pure $ Map.singleton (Fixed (Const x)) 1
-    Uni f t -> do pats <- getAllTokens t
-                  pure $ Map.insertWith (+) (Fixed (Uni f (VarPat 'A'))) 1 pats
-    Bin op l r -> do patsL <- getAllTokens l
-                     patsR <- getAllTokens r
-                     pure $ Map.insertWith (+) (Fixed (Bin op (VarPat 'A') (VarPat 'B'))) 1
-                          $ Map.unionWith (+) patsL patsR
+    EVar ix -> pure $ Map.singleton (Fixed (Var ix)) 1
+    EParam ix -> pure $ Map.singleton (Fixed (Param ix)) 1
+    EConst x -> pure $ Map.singleton (Fixed (Const x)) 1
+    EUni f t -> do pats <- getAllTokens t
+                   pure $ Map.insertWith (+) (Fixed (Uni f (VarPat 'A'))) 1 pats
+    EBin op l r -> do patsL <- getAllTokens l
+                      patsR <- getAllTokens r
+                      pure $ Map.insertWith (+) (Fixed (Bin op (VarPat 'A') (VarPat 'B'))) 1
+                           $ Map.unionWith (+) patsL patsR
+    ENAry op xs -> do pats <- Prelude.mapM getAllTokens (expandedList xs)
+                      pure $ Map.insertWith (+) (Fixed (Bin (toOp op) (VarPat 'A') (VarPat 'B'))) 1
+                           $ Map.unionsWith (+) pats
 
 isNotTrivial :: Monad m => Int -> EClassId -> EGraphST m Bool
 isNotTrivial n ec = do
@@ -555,15 +728,15 @@ removeNotTrivial n (ec:ecs) = do
   pure $ if b then (ec:ecs') else ecs'
 
 refitChanged (dist, trainDatas, testData) = do
-  ids <- gets (_refits . _eDB) >>= Prelude.mapM canonical . Set.toList >>= pure . nub
-  modify' $ over (eDB . refits) (const Set.empty)
+  ids <- gets (_refits . _eDB) >>= Prelude.mapM canonical . IntSet.toList >>= pure . nub
+  modify' $ over (eDB . refits) (const IntSet.empty)
   forM_ ids $ \ec -> do t <- relabelParams <$> getBestExpr ec
                         let dataTrainsVals = Prelude.zip trainDatas testData
                         response <- forM dataTrainsVals $ \(dt, dv) -> fitnessFunRep 100 dist dt t
                         let f = Prelude.minimum (Prelude.map fst response)
                             thetas = Prelude.map snd response
                         insertFitness ec f thetas
-                        let mdl_train  = Prelude.maximum $ Prelude.map (\(theta, (x, y, mYErr)) -> mdl dist mYErr x y theta t) $ Prelude.zip thetas trainDatas
+                        let mdl_train  = Prelude.maximum $ Prelude.map (\(theta, (x, y, mYErr)) -> mdlMetric dist mYErr x y theta t) $ Prelude.zip thetas trainDatas
                         insertDL ec mdl_train
 
 
@@ -576,20 +749,26 @@ extractEClassList :: Monad m => EClassId -> EGraphST m (IntMap.IntMap (Int, Int,
 extractEClassList ec' = do
   ec   <- canonical ec'
   best <- gets (_best . _info . (IntMap.! ec) . _eClass) >>= canonize
-  mec_b <- gets ((Map.!? best) . _eNodeToEClass)
+  mec_b <- gets ((HM.!? best) . _eNodeToEClass)
   case mec_b of
     Nothing   -> pure IntMap.empty
     Just ec_b' -> do ec_b <- canonical ec_b'
                      case best of
-                        Uni _ t   -> do m <- extractEClassList t
-                                        sm <- createSingle ec_b t t m True
-                                        pure $ IntMap.unionWith merge sm m
-                        Bin _ l r -> do m1 <- extractEClassList l
-                                        m2 <- extractEClassList r
-                                        let m = IntMap.unionWith merge m1 m2
-                                        sm <- createSingle ec_b l r m False
-                                        pure $ IntMap.unionWith merge sm m
-                        Param _   -> pure (IntMap.singleton ec_b (1, 1, 1))
+                        EUni _ t   -> do m <- extractEClassList t
+                                         sm <- createSingle ec_b t t m True
+                                         pure $ IntMap.unionWith merge sm m
+                        EBin _ l r -> do m1 <- extractEClassList l
+                                         m2 <- extractEClassList r
+                                         let m = IntMap.unionWith merge m1 m2
+                                         sm <- createSingle ec_b l r m False
+                                         pure $ IntMap.unionWith merge sm m
+                        EParam _   -> pure (IntMap.singleton ec_b (1, 1, 1))
+                        ENAry op xs -> do
+                          let chs = expandedList xs
+                          ms <- Prelude.mapM extractEClassList chs
+                          let m = IntMap.unionsWith merge ms
+                              (bTot, szTot) = foldr (\c (bs, ss) -> let (_, b, sz) = m IntMap.! c in (bs + b, ss + sz)) (0, 0) chs
+                          pure $ IntMap.insertWith merge ec_b (1, bTot, szTot + 1) m
                         _         -> pure (IntMap.singleton ec_b (1, 0, 1))
   where
     merge (count1, ps1, sz1) (count2, ps2, sz2) = (count1+count2, ps1, sz1)

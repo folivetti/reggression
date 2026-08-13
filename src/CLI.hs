@@ -10,7 +10,6 @@
 module CLI (cli, Args(..)) where
 
 import Algorithm.SRTree.Likelihoods
-import Algorithm.SRTree.Opt
 import Control.Monad.State.Strict
 
 import Algorithm.EqSat.Egraph
@@ -21,7 +20,6 @@ import Algorithm.EqSat.DB
 import Algorithm.EqSat.Simplify
 
 import qualified Data.IntMap as IM
-import Data.Massiv.Array as MA hiding (forM_, forM, Continue, convert)
 import Data.Maybe (fromJust, isNothing, isJust)
 import Data.SRTree
 import Data.SRTree.Recursion
@@ -50,7 +48,7 @@ import Control.Monad ( forM, when, forM_ )
 import Data.Binary ( encode, decode )
 import qualified Data.ByteString.Lazy as BS
 import Data.Maybe ( fromMaybe )
-import Text.ParseSR (SRAlgs(..), parseSR, parsePat, Output(..), showOutput)
+import Text.ParseSR (SRAlgs(..), parseSR, Output(..), showOutput)
 import qualified Data.ByteString.Char8 as B
 import qualified Data.IntSet as IntSet
 import qualified Data.Set as SSet
@@ -59,7 +57,7 @@ import Algorithm.EqSat.SearchSR hiding (myCost)
 data Args = Args
   { _dataset       :: String,
     _testData      :: String,
-    _loss          :: Distribution,
+    _loss          :: Loss,
     _dumpTo        :: String,
     _loadFrom      :: String,
     _parseCSV      :: String,
@@ -86,9 +84,9 @@ opt = Args
        <> value ""
        <> showDefault
        <> help "test data")
-  <*> option auto
+  <*> option (maybeReader readLoss)
        ( long "loss"
-       <> value Gaussian
+       <> value (NLL Gaussian)
        <> showDefault
        <> help "loss function of the data.")
   <*> strOption
@@ -122,7 +120,7 @@ opt = Args
        <> help "refit all expressions (can be slow)."
        )
 
-printFun :: [DataSet] -> [DataSet] -> Distribution -> PrintResults -> MyEGraph ()
+printFun :: [DataSet] -> [DataSet] -> Loss -> PrintResults -> MyEGraph ()
 printFun _          _         _    (MultiExprs eids) = printSimpleMultiExprsCLI eids
 printFun datatrains datatests loss (SingleExpr eid)  = printExprCLI datatrains datatests loss eid 
 printFun _          _         _    (Counts pats)     = printMultiCountsCLI pats
@@ -132,7 +130,7 @@ printFun _          _         _    (MultiTrees ts)   = printSimpleMultiTreesCLI 
 
 runIfRight cmd = case cmd of
                     Left err -> liftIO.print $ "wrong command format."
-                    Right c  -> egraph (run c >>= printFun [] [] Gaussian)
+                    Right c  -> egraph (run c >>= printFun [] [] (NLL Gaussian))
 
 topCmd :: [String] -> Repl ()
 topCmd []    = helpCmd ["top"]
@@ -152,14 +150,14 @@ modCmd args = do
   let cmd = parseCmd parseModular (B.pack $ unwords args)
   runIfRight cmd
 
-reportCmd :: Distribution -> [DataSet] -> [DataSet] -> [String] -> Repl ()
+reportCmd :: Loss -> [DataSet] -> [DataSet] -> [String] -> Repl ()
 reportCmd _ _ _ [] = helpCmd ["report"]
 reportCmd dist trainData testData args =
   case readMaybe @Int (head args) of
     Nothing -> liftIO.putStrLn $ "The id must be an integer."
     Just n  -> egraph $ run (Report n (dist, trainData, testData)) >>= printFun trainData testData dist 
 
-optimizeCmd :: Distribution -> [DataSet] -> [DataSet] -> [String] -> Repl ()
+optimizeCmd :: Loss -> [DataSet] -> [DataSet] -> [String] -> Repl ()
 optimizeCmd _ _ _ [] = helpCmd ["optimize"]
 optimizeCmd dist trainData testData args =
   case readMaybe @Int (head args) of
@@ -167,7 +165,7 @@ optimizeCmd dist trainData testData args =
     Just n  -> do let nIters = if length args > 1 then fromMaybe 100 (readMaybe @Int (args !! 1)) else 100
                   egraph $ run (Optimize n nIters (dist, trainData, trainData)) >>= printFun trainData testData dist
  
-eqSatCmd :: Distribution -> [DataSet] -> [DataSet] -> [String] -> Repl ()
+eqSatCmd :: Loss -> [DataSet] -> [DataSet] -> [String] -> Repl ()
 eqSatCmd _ _ _ [] = helpCmd ["eqsat"]
 eqSatCmd dist trainData testData (arg:_) =
   case readMaybe @Int arg of
@@ -177,16 +175,16 @@ eqSatCmd dist trainData testData (arg:_) =
 getNExprsCmd :: [String] -> Repl ()
 getNExprsCmd (arg1:arg2:_) = case  ((,) <$> readMaybe @Int arg1 <*> readMaybe @Int arg2) of
                                   Nothing -> liftIO.putStrLn $ "Both arguments should be an integer."
-                                  Just (n,eid) -> egraph $ run (GetNExprs n eid) >>= printFun [] [] Gaussian
+                                  Just (n,eid) -> egraph $ run (GetNExprs n eid) >>= printFun [] [] (NLL Gaussian)
 getNExprsCmd _ = helpCmd ["getNExprs"]
 
 subtreesCmd :: [String] -> Repl ()
 subtreesCmd [] = helpCmd ["subtrees"]
 subtreesCmd (arg:_) = case readMaybe @Int arg of
                         Nothing -> liftIO.putStrLn $ "The argument must be an integer."
-                        Just n  -> egraph $ run (Subtrees n) >>= printFun [] [] Gaussian
+                        Just n  -> egraph $ run (Subtrees n) >>= printFun [] [] (NLL Gaussian)
 
-insertCmd :: Distribution -> [DataSet] -> [DataSet] -> [String] -> Repl ()
+insertCmd :: Loss -> [DataSet] -> [DataSet] -> [String] -> Repl ()
 insertCmd dist trainData testData [] = helpCmd ["insert"]
 insertCmd dist trainData testData args = do
   let etree = parseSR TIR "" False $ B.pack (unwords args)
@@ -196,37 +194,37 @@ insertCmd dist trainData testData args = do
                      egraph $ run (Optimize ec 100 (dist, trainData, trainData)) >>= printFun trainData testData dist 
 
 paretoCmd :: [String] -> Repl ()
-paretoCmd []   = egraph $ run (Pareto ByFitness) >>= printFun [] [] Gaussian
+paretoCmd []   = egraph $ run (Pareto ByFitness) >>= printFun [] [] (NLL Gaussian)
 paretoCmd args = case (Prelude.map toLower $ unwords args) of
-                    "by fitness" -> egraph $ run (Pareto ByFitness ) >>= printFun [] [] Gaussian 
-                    "by dl"      -> egraph $ run (Pareto ByDL) >>= printFun [] [] Gaussian 
+                    "by fitness" -> egraph $ run (Pareto ByFitness ) >>= printFun [] [] (NLL Gaussian) 
+                    "by dl"      -> egraph $ run (Pareto ByDL) >>= printFun [] [] (NLL Gaussian) 
                     _            -> helpCmd ["pareto"]
 
 countPatCmd :: [String] -> Repl ()
 countPatCmd []   = helpCmd ["count-pattern"]
-countPatCmd args = egraph $ run (CountPat (unwords args)) >>= printFun [] [] Gaussian
+countPatCmd args = egraph $ run (CountPat (unwords args)) >>= printFun [] [] (NLL Gaussian)
 
 saveCmd :: [String] -> Repl ()
 saveCmd [] = helpCmd ["save"]
-saveCmd args = egraph $ run (Save (unwords args)) >>= printFun [] [] Gaussian
+saveCmd args = egraph $ run (Save (unwords args)) >>= printFun [] [] (NLL Gaussian)
 
 loadCmd :: [String] -> Repl ()
 loadCmd [] = helpCmd ["load"]
-loadCmd args = egraph $ run (Load (unwords args)) >>= printFun [] [] Gaussian
+loadCmd args = egraph $ run (Load (unwords args)) >>= printFun [] [] (NLL Gaussian)
 
-importCmd :: Distribution -> String -> [String] -> Repl ()
+importCmd :: Loss -> String -> [String] -> Repl ()
 importCmd dist varnames (fname:params:_) = egraph $ run (Import fname dist varnames (Prelude.read params)) >>= printFun [] [] dist 
 importCmd dist varnames _   = helpCmd ["import"]
 
 distTokensCmd [] = helpCmd ["distribution-tokens"]
 distTokensCmd (arg:_) = case readMaybe @Int arg of
-                          Just n -> egraph $ run (DistTokens n) >>= printFun [] [] Gaussian
+                          Just n -> egraph $ run (DistTokens n) >>= printFun [] [] (NLL Gaussian)
                           Nothing -> helpCmd ["distribution-tokens"]
 
 extractPatCmd [] = helpCmd ["extract-pattern"]
 extractPatCmd args = case readMaybe @Int (head args) of
     Nothing -> liftIO.putStrLn $ "The id must be an integer."
-    Just n  -> egraph $ run (ExtractPat n) >>= printFun [] [] Gaussian
+    Just n  -> egraph $ run (ExtractPat n) >>= printFun [] [] (NLL Gaussian)
 
 commands = ["help", "top", "report", "optimize", "eqsat", "getNExprs", "subtrees", "insert", "count-pattern", "distribution", "modularity", "pareto", "save", "load", "import", "extract-pattern", "distribution-tokens"]
 
