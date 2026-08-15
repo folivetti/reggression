@@ -416,6 +416,27 @@ class Reggression():
             SQLite database filename
         '''
         return self.runQuery(f"db-load {fname}", df=False)
+    def importDB(self, eqs, fname, extractParameters=True):
+        ''' Build an e-graph directly in the SQLite database `fname`,
+        out-of-core, by streaming the expressions in the CSV file `eqs` into
+        the database (structural, content-addressed, bounded memory) -- no
+        in-memory e-graph is built first. The resulting database is identical
+        to `persist` of the corresponding in-memory seed and can be saturated
+        with `dbEqSat`.
+
+        IMPORTANT: the extension of the CSV file must match the source
+        algorithm (e.g. `.tir`), as with `importFromCSV`.
+
+        Parameters
+        ----------
+        eqs : str
+            Path to the CSV file of expressions.
+        fname : str
+            SQLite database filename to build.
+        extractParameters : bool, default=True
+            Whether to extract parameter values from the expressions.
+        '''
+        return self.runQuery(f"db-import {fname} {eqs}", df=False)
     def dbTop(self, fname, n=5):
         ''' Top-n e-classes by fitness queried directly from the SQLite
         database fname (no in-memory pattern enumeration).
@@ -483,6 +504,23 @@ class Reggression():
             SQLite database filename
         '''
         return self.runQuery(f"db-refresh-fitness {fname}", df=False)
+    def dbEqSat(self, fname, iterations=10, ruleset="default"):
+        ''' Run equality saturation directly against a lazily loaded (out-of-core)
+        e-graph stored in the SQLite database fname. The e-graph stays paged:
+        only the structural indexes are resident and every e-class body is
+        streamed through the store, so it never all lives in memory at once. The
+        rewritten graph is written back to fname.
+
+        Parameters
+        ----------
+        fname : str
+            SQLite database filename
+        iterations : int, default=10
+            Maximum number of eqsat iterations
+        ruleset : str, default="default"
+            Rule set to apply: "default" (rewrites) or "params" (rewritesParams)
+        '''
+        return self.runQuery(f"db-eqsat {fname} {iterations} {ruleset}", df=False)
     def importFromCSV(self, fname, extractParameters=True):
         ''' import equations from a CSV file
         IMPORTANT: the extension of the CSV file must match the source

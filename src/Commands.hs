@@ -1,5 +1,7 @@
 {-# language OverloadedStrings #-}
 {-# language TupleSections #-}
+{-# language RankNTypes #-}
+{-# language ScopedTypeVariables #-}
 
 module Commands where
 
@@ -15,13 +17,13 @@ import qualified Data.IntSet as IntSet
 import Control.Monad.State.Strict
 import Control.Monad ( forM_, filterM, forM )
 import Control.Monad.IO.Class ( liftIO )
-import Control.Exception ( bracket )
+import Control.Exception ( bracket, bracketOnError )
 import Data.Char ( toUpper )
 import qualified Data.Map as Map
 import qualified Data.HashMap.Strict as HM
 import qualified Data.HashSet as Set
 import qualified Data.Vector.Unboxed as VU
-import Data.List ( nub, sortOn, intercalate )
+import Data.List ( nub, sortOn, intercalate, isPrefixOf )
 import Data.List.Split ( splitOn )
 import Control.Lens (over)
 
@@ -52,7 +54,11 @@ import Data.Binary ( encode, decode )
 import qualified Data.ByteString.Lazy as BS
 
 import Database.SQLite3 ( Database, open, close )
-import Algorithm.EqSat.Storage.SQLite ( saveGraph, loadGraph, pushFit, refreshFitness )
+import Database.PostgreSQL.LibPQ ( Connection, connectdb, finish )
+import Algorithm.EqSat.Storage.SQLite ( saveGraph, loadGraphLazy, pushFit, refreshFitness, flushStore )
+import Algorithm.EqSat.Storage.Postgres ()
+import Algorithm.EqSat.Storage.Backend ( SqlBackend )
+import Algorithm.EqSat.Storage.Import (importEqs, ImportSummary(..))
 import qualified Algorithm.EqSat.Storage.Query as Q
 
 import Util
@@ -76,12 +82,14 @@ data Command  = Top Int Filter Criteria PatStr
               | Load String
               | Persist String
               | LoadDB String
-              | DBTop String Int
+              | DBTop String Int [String]
               | DBDist String Int
               | DBCount String String
-               | DBPareto String
-               | PushFit String
-               | RefreshFit String
+                | DBPareto String
+                | PushFit String
+                | RefreshFit String
+                | DBEqSat String Int String
+               | ImportDB String String Loss String Bool
                | Import String Loss String Bool
               | EqSatStep Int ArgOpt
               | GetNExprs Int EClassId
@@ -168,7 +176,7 @@ parseDBTop   = string "db-top " >>= \_ -> do
   fname <- B.unpack <$> parseFname
   stripSp
   n <- decimal
-  pure (DBTop fname n)
+  pure (DBTop fname n ["x"])
 parseDBDist  = string "db-distribution " >>= \_ -> do
   fname <- B.unpack <$> parseFname
   stripSp
@@ -182,6 +190,13 @@ parseDBCount = string "db-count " >>= \_ -> do
 parseDBPareto = string "db-pareto " *> (DBPareto <$> (B.unpack <$> parseFname)) 
 parsePushFit = string "db-push-fit " *> (PushFit <$> (B.unpack <$> parseFname))
 parseRefreshFit = string "db-refresh-fitness " *> (RefreshFit <$> (B.unpack <$> parseFname))
+parseDBEqSat = string "db-eqsat " >>= \_ -> do
+  fname <- B.unpack <$> parseFname
+  stripSp
+  n <- decimal
+  stripSp
+  rs <- option "" (B.unpack <$> parseFname)
+  pure (DBEqSat fname n rs)
 parseCriteriaDL = (stringCI "by count" >> pure ByCount)
               <|> (stringCI "by fitness" >> pure ByAvgFit)
 
@@ -460,56 +475,133 @@ run (Load fname) = do
 
 run (Persist fname) = do
   eg <- get
-  r  <- liftIO $ withSQLite fname $ \db -> saveGraph db eg
+  r  <- liftIO $ withBackend fname $ \db -> saveGraph db eg
   pure . SimpleStr $ case r of
     Left err -> "persist failed: " <> err
     Right () -> "e-graph persisted to " <> fname
 
 run (LoadDB fname) = do
-  r <- liftIO $ withSQLite fname loadGraph
+  -- NB: keep the DB connection alive.  loadGraphLazy builds a paged
+  -- e-graph whose 'EClassPageStore' references this very connection, so closing
+  -- it (as 'withBackend' does) would leave the graph pointing at a dead
+  -- connection and every later page read (e.g. recalculateBestAllStream ->
+  -- allKeys -> allPages, or flushGraphStore) would crash with SQLITE_MISUSE.
+  -- bracketOnError closes only on failure; on success the connection is owned
+  -- by the e-graph (via '_classStore') and is finalised when the graph is
+  -- replaced/GC'd.
+  r <- liftIO $ withBackendKeepOpen fname loadGraphLazy
   case r of
     Left err -> pure . SimpleStr $ "db-load failed: " <> err
-    Right eg -> do put eg
-                   -- best/cost are not persisted in the db: recompute the
-                   -- cost-minimal best for every e-class (the database holds
-                   -- arbitrary nodes otherwise, which can explode when
-                   -- expanded for printing/pattern matching)
-                   recalculateBestAll myCost
-                   pure (SimpleStr ("e-graph loaded from " <> fname))
+    Right eg -> do
+      put eg
+      -- best/cost are not persisted in the db: recompute the
+      -- cost-minimal best for every e-class (the database holds
+      -- arbitrary nodes otherwise, which can explode when
+      -- expanded for printing/pattern matching). This streams each
+      -- class through the paged store and stays memory-bounded.
+      recalculateBestAllStream myCost
+      flushGraphStore
+      pure (SimpleStr ("e-graph loaded from " <> fname))
 
-run (DBTop fname n) = do
-  r <- liftIO $ withSQLite fname $ \db -> Q.topN db n
-  pure . MultiExprs $ [(eid, IntMap.empty) | (eid, _) <- r]
+run (DBTop fname n varnames) = do
+
+  -- Render the top-N e-classes out-of-core: install the lazily paged graph
+  -- (bounded memory) and recompute best/cost, then format each top e-class by
+  -- streaming its page. No full in-memory graph is required.
+  r <- liftIO $ withBackendKeepOpen fname $ \db -> do
+         top <- Q.topN db n
+         er  <- loadGraphLazy db
+         pure (top, er)
+  case r of
+    (_, Left err) -> pure . SimpleStr $ "db-top failed: " <> err
+    (top, Right eg) -> do
+      put eg
+      recalculateBestAllStream myCost
+      flushGraphStore
+      str <- printSimpleMultiExprs varnames [(eid, IntMap.empty) | (eid, _) <- top]
+      pure (SimpleStr str)
 
 run (DBDist fname n) = do
-  r <- liftIO $ withSQLite fname $ \db -> Q.distributionCounts db n
+  r <- liftIO $ withBackend fname $ \db -> Q.distributionCounts db n
   pure . SimpleStr . intercalate "\n" $ ("Size,Count" : [show s <> "," <> show c | (s, c) <- r])
 
 run (DBCount fname op) = do
-  c <- liftIO $ withSQLite fname $ \db -> Q.countPattern db (T.pack op)
+  c <- liftIO $ withBackend fname $ \db -> Q.countPattern db (T.pack op)
   pure . SimpleStr $ "e-classes containing " <> op <> ": " <> show c
 
 run (DBPareto fname) = do
-  r <- liftIO $ withSQLite fname $ \db -> Q.paretoBySize db
+  r <- liftIO $ withBackend fname $ \db -> Q.paretoBySize db
   pure . SimpleStr . intercalate "\n" $ ("Id,Fitness,Size" : [show eid <> "," <> show f <> "," <> show s | (eid, f, s) <- r])
 
 run (PushFit fname) = do
   eg <- get
-  liftIO $ withSQLite fname $ \db -> pushFit db eg
+  liftIO $ withBackend fname $ \db -> pushFit db eg
   pure . SimpleStr $ "fit table written to " <> fname
 
 run (RefreshFit fname) = do
   eg <- get
-  r  <- liftIO $ withSQLite fname $ \db -> refreshFitness db eg
+  r  <- liftIO $ withBackend fname $ \db -> refreshFitness db eg
   case r of
     Left err -> pure . SimpleStr $ "db-refresh-fitness failed: " <> err
     Right eg' -> do put eg'
                     rebuildAllRanges
                     pure (SimpleStr ("fitness refreshed from " <> fname))
 
+-- | Run equality saturation entirely against a lazily loaded (out-of-core) graph.
+-- The e-graph stays paged: only the structural indexes are resident, every
+-- e-class body is streamed through the store, and class bodies never all live in
+-- memory at once. The rewritten graph is written back with 'saveGraph'.
+run (DBEqSat fname iters rs) = do
+  let rules = case rs of
+               "params" -> rewritesParams
+               _        -> rewrites
+  r <- liftIO $ withBackend fname $ \db -> do
+        er <- loadGraphLazy db
+        case er of
+          Left err -> pure (Left err)
+          Right eg -> do
+            -- cost/best are not persisted: recompute them first so rewrites
+            -- operate on valid per-class data (imported DBs carry defaults).
+            let go g = execStateT (recalculateBestAllStream myCost >> runEqSat myCost rules iters) g
+            eg' <- go eg
+            flushStore eg'
+            saveGraph db eg'
+            pure (Right ())
+  pure . SimpleStr $ case r of
+    Left err -> "db-eqsat failed: " <> err
+    Right () -> "db-eqsat applied " <> show iters <> " iteration(s) of '"
+                  <> (if null rs then "default" else rs) <> "' on " <> fname
+
 run (Import fname dist varnames params) = do
   importCSV dist fname varnames params
   pure NoPrint
+
+-- | Out-of-core seed import: stream every expression from the CSV file
+-- directly into the database (structural, content-addressed) instead of first
+-- building the e-graph in RAM. The produced DB is identical to 'persist' of
+-- the corresponding in-memory seed and can be saturated with 'dbEqSat'.
+run (ImportDB fname eqs dist varnames params) = do
+  let alg = getFormat eqs
+      toT  [eq, t, f] = (eq, Prelude.map Prelude.read $ Prelude.filter (not.null) $ splitOn ";" t, fromMaybe (-1.0/0.0) $ readMaybe f)
+      toT xss = error $ show xss
+      parseOne (eq, ps, f) = case parseSR alg (B.pack varnames) False (B.pack eq) of
+        Left _ -> Nothing
+        Right tree' -> do
+          let (tree, pvs) = if params then floatConstsToParam tree' else (tree', [])
+              theta       = if params then if dist==MSE then pvs <> ps else pvs else ps
+          Just (relabelP0 tree, [VU.fromList theta], Just f)
+  content <- liftIO $ Prelude.map (toT . splitOn ",") . lines <$> readFile eqs
+  r <- liftIO $ withBackend fname $ \db -> importEqs db (catMaybes (Prelude.map parseOne content))
+  pure . SimpleStr $ case r of
+    Left err -> "db-import failed: " <> err
+    Right s  -> "imported " <> show (isExpressions s) <> " expressions (" <> show (isClasses s) <> " e-classes) into " <> fname
+  where
+    relabelP0 = cata alg
+      where
+        alg (Uni f t) = Fix (Uni f t)
+        alg (Bin op l r) = Fix (Bin op l r)
+        alg (Param ix) = Fix (Param 0)
+        alg x = Fix x
 
 run (DistTokens n) = do
   ee <- if n > 0
@@ -526,7 +618,10 @@ run (ExtractPat eid) = do
 --                                pure NoPrint
 run (EqSatStep n dataInfo) = do createDB 
                                 forM_ [1..n] $ \_ -> (do runEqSat myCost rewrites 1
-                                                         createDB)
+                                                         createDB
+                                                         -- durable commit point: write back any
+                                                         -- dirty e-class pages (no-op unless paged)
+                                                         flushGraphStore)
                                 refitChanged dataInfo
                                 pure NoPrint
 
@@ -539,8 +634,29 @@ run (GetNEclass n eid) = do ids <- getNEclassFrom n eid
 --  runEqSat myCost rewrites 1
 
 -- * auxiliary functions
-withSQLite :: FilePath -> (Database -> IO a) -> IO a
-withSQLite fname k = bracket (open (T.pack fname)) close k
+-- | Write back any pending dirty e-class pages (durable commit point).
+flushGraphStore :: MyEGraph ()
+flushGraphStore = do
+  eg <- get
+  liftIO (flushStore eg)
+
+withBackend :: String -> (forall b. SqlBackend b => b -> IO a) -> IO a
+withBackend spec k
+  | "postgresql://" `isPrefixOf` spec || "postgres://" `isPrefixOf` spec =
+      bracket (connectdb (B.pack spec)) finish (\c -> k c)
+  | otherwise =
+      bracket (open (T.pack spec)) close (\d -> k d)
+
+-- | Like 'withBackend' but the connection is kept open on success: it is owned by
+-- the value returned from @k@ (e.g. a paged e-graph whose page store references
+-- it) and is finalised when that value is dropped. Only on exception is the
+-- connection closed here.
+withBackendKeepOpen :: String -> (forall b. SqlBackend b => b -> IO a) -> IO a
+withBackendKeepOpen spec k
+  | "postgresql://" `isPrefixOf` spec || "postgres://" `isPrefixOf` spec =
+      bracketOnError (connectdb (B.pack spec)) finish (\c -> k c)
+  | otherwise =
+      bracketOnError (open (T.pack spec)) close (\d -> k d)
 
 importCSV :: Loss -> String -> String -> Bool -> MyEGraph ()
 importCSV dist fname hdr convertParam = cleanDB >> parseEqs >> createDB >> rebuildAllRanges

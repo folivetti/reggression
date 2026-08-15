@@ -184,9 +184,17 @@ persistCmd varnames args = run (Persist (unwords args)) >>= printFun varnames []
 dbLoadCmd varnames [] = helpCmd ["db-load"]
 dbLoadCmd varnames args = run (LoadDB (unwords args)) >>= printFun varnames [] [] (NLL Gaussian)
 
+dbImportCmd varnames loss vars (db:eqs:_) = run (ImportDB db eqs loss vars True) >>= printFun varnames [] [] loss
+dbImportCmd varnames _ _ _ = helpCmd ["db-import"]
+
+dbEqSatCmd varnames (fname:n:rs:_) = case readMaybe @Int n of
+                                        Nothing -> pure "The n must be an integer."
+                                        Just k  -> run (DBEqSat fname k rs) >>= printFun varnames [] [] (NLL Gaussian)
+dbEqSatCmd varnames _ = helpCmd ["db-eqsat"]
+
 dbTopCmd varnames (fname:n:_) = case readMaybe @Int n of
                                     Nothing -> pure "The n must be an integer."
-                                    Just k  -> run (DBTop fname k) >>= printFun varnames [] [] (NLL Gaussian)
+                                    Just k  -> run (DBTop fname k varnames) >>= printFun varnames [] [] (NLL Gaussian)
 dbTopCmd varnames _ = helpCmd ["db-top"]
 
 dbDistCmd varnames (fname:n:_) = case readMaybe @Int n of
@@ -206,7 +214,7 @@ dbPushFitCmd varnames args = run (PushFit (unwords args)) >>= printFun varnames 
 dbRefreshFitCmd varnames [] = helpCmd ["db-refresh-fitness"]
 dbRefreshFitCmd varnames args = run (RefreshFit (unwords args)) >>= printFun varnames [] [] (NLL Gaussian)
 
-commands = ["help", "top", "report", "optimize", "eqsat", "getNExprs", "subtrees", "insert", "count-pattern", "distribution", "modularity", "pareto", "save", "load", "import", "extract-pattern", "distribution-tokens", "getNEclasses", "persist", "db-load", "db-top", "db-distribution", "db-count", "db-pareto", "db-push-fit", "db-refresh-fitness"]
+commands = ["help", "top", "report", "optimize", "eqsat", "getNExprs", "subtrees", "insert", "count-pattern", "distribution", "modularity", "pareto", "save", "load", "import", "extract-pattern", "distribution-tokens", "getNEclasses", "persist", "db-load", "db-import", "db-eqsat", "db-top", "db-distribution", "db-count", "db-pareto", "db-push-fit", "db-refresh-fitness"]
 
 topHlp = "top N [FILTER...] [CRITERIA] [[not] matching [root] PATTERN] \n \
          \ \n \
@@ -288,8 +296,10 @@ hlpMap = Map.fromList $ Prelude.zip commands
                             , "extract the patterns from a single expression"
                             , "extract list of e-classes for N equivalnt expressions"
                             , "persist FILE: save the current e-graph to the SQLite database FILE."
-                            , "db-load FILE: load an e-graph previously persisted in the SQLite database FILE."
-                            , "db-top FILE N: top-N e-classes by fitness queried from the SQLite database FILE."
+                             , "db-load FILE: load an e-graph previously persisted in the SQLite database FILE."
+                             , "db-import DBFILE EXPRS: build an e-graph out-of-core directly in the SQLite database DBFILE by streaming the expressions in EXPRS (structural-only, bounded memory)."
+                             , "db-eqsat FILE ITER [RULES]: run ITER equality-saturation iterations out-of-core against the lazily loaded e-graph in SQLite FILE."
+                             , "db-top FILE N: top-N e-classes by fitness queried from the SQLite database FILE."
                             , "db-distribution FILE N: number of evaluated e-classes per model size (size <= N) from the SQLite database FILE."
                             , "db-count FILE OP: number of e-classes containing an e-node with operator OP (e.g. EAdd, EMul, LogAbs) from the SQLite database FILE."
                             , "db-pareto FILE: Pareto front over (fitness, size) from the SQLite database FILE."
@@ -349,6 +359,8 @@ reggression myCmd dataset testData loss' loadFrom dumpTo parseCSV' parseParams c
              , getNEclassesCmd varnames
              , persistCmd varnames
              , dbLoadCmd varnames
+             , dbImportCmd varnames loss varnames'
+             , dbEqSatCmd varnames
              , dbTopCmd varnames
              , dbDistCmd varnames
              , dbCountCmd varnames
