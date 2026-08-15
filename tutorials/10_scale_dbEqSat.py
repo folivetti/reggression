@@ -1,6 +1,6 @@
 """
-10 - Scalability: out-of-core equality saturation at ~500k e-classes
-===================================================================
+10 - Scalability: out-of-core equality saturation on SQLite
+===========================================================
 
 This tutorial demonstrates two out-of-core capabilities of reggression built on
 srtree-db:
@@ -20,8 +20,8 @@ The intended workflow -- and the one shown here -- is:
      straight into the SQLite database ``db``, expanding each subexpression into
      its own e-class. Nothing is built in memory first (the class bodies are
      only written back to ``cstore_page`` at the end).
-  2. ``dbEqSat(db, ...)``: run the *full* equality saturation out-of-core
-     directly against that database, then query the result with ``dbTop``.
+  2. ``dbEqSat(db, ...)``: run equality saturation out-of-core directly against
+     that database, then query the result with ``dbTop``.
 
 We do **not** run eqsat in memory and then replay it in the DB: both the import
 and the saturation are out-of-core from the beginning.
@@ -30,10 +30,20 @@ Run from the ``tutorials/`` directory:
 
     python 10_scale_dbEqSat.py
 
-This is a heavy demo: importing ~500k e-classes streams them into SQLite in a
-few minutes and writes a multi-hundred-MB database, but peak RAM during the
-import stays proportional to the class skeleton rather than the full graph, and
-the saturation adds only a bounded page cache on top.
+The default run seeds ~40k e-classes (20k equations) and finishes in well under
+a minute. ``importDB`` itself is fully out-of-core and scales to hundreds of
+thousands of classes; the demo keeps the default below that so the whole
+pipeline (import -> saturate -> query) runs quickly.
+
+Runtime/scaling note: ``dbEqSat``'s rewrite engine currently saturates graphs
+reliably up to roughly 50-60k e-classes; beyond that the n-ary matcher/merge
+step slows down sharply (a pre-existing engine limitation, independent of the
+out-of-core storage). The workload is tunable via environment variables:
+
+    SCALE_N=20000    number of seed equations (default 20000 -> ~40k classes)
+    SCALE_ITERS=4    dbEqSat iterations (default 4)
+
+Try ``SCALE_N=2000 SCALE_ITERS=2`` first for a very quick smoke run.
 """
 
 import os
@@ -142,14 +152,16 @@ def main():
     #     chosen the same way importFromCSV does (by extension). importDB
     #     streams each expression into SQLite with content-addressed dedup; no
     #     in-memory e-graph is ever constructed.
-    N_EQUATIONS = 200_000
-    db = "scale_500k.db"
+    N_EQUATIONS = int(os.environ.get("SCALE_N", "20000"))
+    iters = int(os.environ.get("SCALE_ITERS", "4"))
+    db = "scale.db"
     eqs_csv = "scale_equations.tir"
     rng = np.random.default_rng(7)
     with open(eqs_csv, "w", newline="") as fh:
         w = csv.writer(fh)
         for _ in range(N_EQUATIONS):
-            # weight depth 4 a little higher so the seed graph reaches ~500k classes
+            # weight depth 4 a little higher so the seed graph reaches ~2x classes
+            # (e.g. ~40k e-classes at the default 20k equations)
             w.writerow([_random_expr(rng, rng.choice([1, 2, 3, 4, 4])), "", "0.0"])
     if os.path.exists(db):
         os.remove(db)
@@ -179,7 +191,7 @@ def main():
           "(out-of-core, paged) ...")
     with PeakTracker() as po:
         t = time.time()
-        egg.dbEqSat(db, iterations=12, ruleset="default")
+        egg.dbEqSat(db, iterations=iters, ruleset="default")
         top_db = egg.dbTop(db, 5)
         sat_s = time.time() - t
     sat_delta_mb = po.delta / 1e6
@@ -202,8 +214,8 @@ def main():
     print(f"  out-of-core dbEqSat : {sat_delta_mb:8.1f} MB incremental "
           f"({sat_s:.1f}s)  <- bounded by the page cache")
     print("=" * 64)
-    print("PASS: seeded a ~500k-class e-graph directly in SQLite out-of-core "
-          "and saturated it with dbEqSat, all with bounded memory.")
+    print("PASS: seeded an e-graph directly in SQLite out-of-core and "
+          "saturated it with dbEqSat, all with bounded memory.")
 
     # cleanup
     for f in (data_csv, eqs_csv, db):
