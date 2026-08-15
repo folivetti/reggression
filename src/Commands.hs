@@ -62,7 +62,7 @@ import Algorithm.EqSat.Storage.Import (importEqs, ImportSummary(..))
 import qualified Algorithm.EqSat.Storage.Query as Q
 
 import Util
-import Debug.Trace 
+import Debug.Trace
 -- * Parsing
 
 -- top 5 by fitness|mdl [less than 5 params, less than 10 nodes]
