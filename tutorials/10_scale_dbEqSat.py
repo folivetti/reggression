@@ -31,14 +31,15 @@ Run from the ``tutorials/`` directory:
     python 10_scale_dbEqSat.py
 
 The default run seeds ~40k e-classes (20k equations) and finishes in well under
-a minute. ``importDB`` itself is fully out-of-core and scales to hundreds of
-thousands of classes; the demo keeps the default below that so the whole
-pipeline (import -> saturate -> query) runs quickly.
+a minute. Both ``importDB`` and ``dbEqSat`` scale smoothly into the hundreds of
+thousands of e-classes; the demo keeps the default comfortably small so the
+whole pipeline (import -> saturate -> query) runs quickly and stays well within
+RAM (the import peak is proportional to the class skeleton).
 
-Runtime/scaling note: ``dbEqSat``'s rewrite engine currently saturates graphs
-reliably up to roughly 50-60k e-classes; beyond that the n-ary matcher/merge
-step slows down sharply (a pre-existing engine limitation, independent of the
-out-of-core storage). The workload is tunable via environment variables:
+Runtime/scaling note: eqsat's n-ary matcher is work-bounded (a per-rule cap on
+how many classes it scans), so a saturation iteration's cost stays proportional
+to the graph rather than exploding combinatorially. The workload is tunable via
+environment variables:
 
     SCALE_N=20000    number of seed equations (default 20000 -> ~40k classes)
     SCALE_ITERS=4    dbEqSat iterations (default 4)
