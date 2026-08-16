@@ -537,6 +537,15 @@ class Reggression():
             Rule set to apply: "default" (rewrites) or "params" (rewritesParams)
         '''
         return self.runQuery(f"db-eqsat {fname} {self.dataset_name} {iterations} {ruleset}", df=False)
+    def dbEqSatFrontier(self, fname, iterations=10, ruleset="default"):
+        ''' Re-saturate only the frontier of a lazily loaded (out-of-core) e-graph:
+        the e-classes that were created or merged since the last re-saturation pass
+        (tracked in the DB's `frontier` table). The matcher's candidate roots are
+        restricted to the frontier, so unchanged parts of the graph are not re-worked.
+        The frontier is cleared afterwards. O(1) memory (paged). The pure in-memory
+        eggp loop and a full `dbEqSat` are unaffected.
+        '''
+        return self.runQuery(f"db-eqsat-frontier {fname} {self.dataset_name} {iterations} {ruleset}", df=False)
     def importFromCSV(self, fname, extractParameters=True):
         ''' import equations from a CSV file
         IMPORTANT: the extension of the CSV file must match the source

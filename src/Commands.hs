@@ -60,6 +60,7 @@ import Algorithm.EqSat.Storage.Postgres ()
 import Algorithm.EqSat.Storage.Backend ( SqlBackend )
 import Algorithm.EqSat.Storage.Import (importEqs, ImportSummary(..))
 import Algorithm.EqSat.Storage.Stream (streamByOpCount, streamMatchNAry)
+import Algorithm.EqSat.Storage.ClassStore (loadFrontierRows)
 import qualified Algorithm.EqSat.Storage.Query as Q
 
 import Util
@@ -90,6 +91,7 @@ data Command  = Top Int Filter Criteria PatStr
                 | PushFit String String
                 | RefreshFit String String
                 | DBEqSat String String Int String
+                | DBEqSatFrontier String String Int String
                 | DBStream String String Int
                | ImportDB String String String Loss String Bool
                | Import String Loss String Bool
@@ -225,6 +227,15 @@ parseDBEqSat = string "db-eqsat " >>= \_ -> do
   stripSp
   rs <- option "" (B.unpack <$> parseFname)
   pure (DBEqSat fname ds n rs)
+parseDBEqSatFrontier = string "db-eqsat-frontier " >>= \_ -> do
+  fname <- B.unpack <$> parseFname
+  stripSp
+  ds <- B.unpack <$> parseFname
+  stripSp
+  n <- decimal
+  stripSp
+  rs <- option "" (B.unpack <$> parseFname)
+  pure (DBEqSatFrontier fname ds n rs)
 parseCriteriaDL = (stringCI "by count" >> pure ByCount)
               <|> (stringCI "by fitness" >> pure ByAvgFit)
 
@@ -608,10 +619,46 @@ run (DBEqSat fname ds iters rs) = do
             eg' <- go eg
             flushStore eg'
             saveGraph db dsid eg'
+            -- a full pass re-saturated everything: clear any frontier marks
+            case _classStore eg' of
+              Nothing -> pure ()
+              Just h  -> liftIO (cpsEndFrontier h)
             pure (Right ())
   pure . SimpleStr $ case r of
     Left err -> "db-eqsat failed: " <> err
     Right () -> "db-eqsat applied " <> show iters <> " iteration(s) of '"
+                  <> (if null rs then "default" else rs) <> "' on " <> fname
+
+-- | Re-saturate only the frontier: e-classes that have been created or merged
+-- since the last re-saturation pass (tracked by the write-through into the
+-- @frontier@ table). The matcher's candidate roots are restricted to the
+-- frontier, so unchanged parts of the graph are not re-worked. Clears the
+-- frontier afterwards. O(1) memory, paged. The pure in-memory eggp loop and a
+-- full 'dbEqSat' are unaffected.
+run (DBEqSatFrontier fname ds iters rs) = do
+  let rules = case rs of
+               "params" -> rewritesParams
+               _        -> rewrites
+  r <- liftIO $ withBackend fname $ \db -> do
+        dsid <- Q.getOrCreateDataset db ds
+        er <- loadGraphLazy db dsid
+        case er of
+          Left err -> pure (Left err)
+          Right eg -> case _classStore eg of
+            Nothing -> pure (Left "db-eqsat-frontier requires a paged graph")
+            Just h  -> do
+              n0 <- length <$> loadFrontierRows db
+              liftIO (cpsBeginFrontier h)
+              eg' <- execStateT (runEqSat myCost rules iters) eg
+              liftIO (cpsEndFrontier h)
+              flushStore eg'
+              saveGraph db dsid eg'
+              pure (Right n0)
+  pure . SimpleStr $ case r of
+    Left err -> "db-eqsat-frontier failed: " <> err
+    Right n0 -> "db-eqsat-frontier re-saturated " <> show n0
+                  <> " frontier class(es) in " <> show iters
+                  <> " iteration(s) of '"
                   <> (if null rs then "default" else rs) <> "' on " <> fname
 
 run (Import fname dist varnames params) = do
