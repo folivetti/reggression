@@ -121,6 +121,7 @@ class Reggression():
         if not isinstance(refit, bool):
             raise ValueError('refit must be a boolean')
         self.dataset = dataset
+        self.dataset_name = os.path.splitext(os.path.basename(dataset))[0]
         self.testData = testData
         self.loss = loss
         self.loadFrom = loadFrom
@@ -436,7 +437,7 @@ class Reggression():
         extractParameters : bool, default=True
             Whether to extract parameter values from the expressions.
         '''
-        return self.runQuery(f"db-import {fname} {eqs}", df=False)
+        return self.runQuery(f"db-import {fname} {eqs} {self.dataset_name}", df=False)
     def dbTop(self, fname, n=5):
         ''' Top-n e-classes by fitness queried directly from the SQLite
         database fname (no in-memory pattern enumeration).
@@ -448,7 +449,7 @@ class Reggression():
         n : int, default=5
             Number of e-classes
         '''
-        return self.runQuery(f"db-top {fname} {n}")
+        return self.runQuery(f"db-top {fname} {self.dataset_name} {n}")
     def dbDistribution(self, fname, maxSize=100):
         ''' Number of evaluated e-classes per model size (size <= maxSize),
         queried from the SQLite database fname.
@@ -460,7 +461,7 @@ class Reggression():
         maxSize : int, default=100
             Maximum model size included
         '''
-        return self.runQuery(f"db-distribution {fname} {maxSize}")
+        return self.runQuery(f"db-distribution {fname} {self.dataset_name} {maxSize}")
     def dbCount(self, fname, op):
         ''' Number of e-classes containing an e-node with operator `op`
         (e.g. "EAdd", "EMul", "LogAbs"), queried from the SQLite database fname.
@@ -482,7 +483,7 @@ class Reggression():
         fname : str
             SQLite database filename
         '''
-        return self.runQuery(f"db-pareto {fname}")
+        return self.runQuery(f"db-pareto {fname} {self.dataset_name}")
     def dbPushFit(self, fname):
         ''' Write the current e-graph's fitness/DL metrics into the @fit@ table
         of the SQLite database fname (the graph structure is left intact).

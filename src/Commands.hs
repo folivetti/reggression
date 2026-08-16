@@ -82,14 +82,14 @@ data Command  = Top Int Filter Criteria PatStr
               | Load String
               | Persist String
               | LoadDB String
-              | DBTop String Int [String]
-              | DBDist String Int
+              | DBTop String String Int [String]
+              | DBDist String String Int
               | DBCount String String
-                | DBPareto String
+                | DBPareto String String
                 | PushFit String
                 | RefreshFit String
                 | DBEqSat String Int String
-               | ImportDB String String Loss String Bool
+               | ImportDB String String String Loss String Bool
                | Import String Loss String Bool
               | EqSatStep Int ArgOpt
               | GetNExprs Int EClassId
@@ -175,19 +175,27 @@ parseLoadDB  = string "db-load " *> (B.unpack <$> parseFname)
 parseDBTop   = string "db-top " >>= \_ -> do
   fname <- B.unpack <$> parseFname
   stripSp
+  ds <- B.unpack <$> parseFname
+  stripSp
   n <- decimal
-  pure (DBTop fname n ["x"])
+  pure (DBTop fname ds n ["x"])
 parseDBDist  = string "db-distribution " >>= \_ -> do
   fname <- B.unpack <$> parseFname
   stripSp
+  ds <- B.unpack <$> parseFname
+  stripSp
   n <- decimal
-  pure (DBDist fname n)
+  pure (DBDist fname ds n)
 parseDBCount = string "db-count " >>= \_ -> do
   fname <- B.unpack <$> parseFname
   stripSp
   op <- B.unpack <$> parseFname
   pure (DBCount fname op)
-parseDBPareto = string "db-pareto " *> (DBPareto <$> (B.unpack <$> parseFname)) 
+parseDBPareto = string "db-pareto " >>= \_ -> do
+  fname <- B.unpack <$> parseFname
+  stripSp
+  ds <- B.unpack <$> parseFname
+  pure (DBPareto fname ds) 
 parsePushFit = string "db-push-fit " *> (PushFit <$> (B.unpack <$> parseFname))
 parseRefreshFit = string "db-refresh-fitness " *> (RefreshFit <$> (B.unpack <$> parseFname))
 parseDBEqSat = string "db-eqsat " >>= \_ -> do
@@ -503,14 +511,15 @@ run (LoadDB fname) = do
       flushGraphStore
       pure (SimpleStr ("e-graph loaded from " <> fname))
 
-run (DBTop fname n varnames) = do
+run (DBTop fname ds n varnames) = do
 
   -- Render the top-N e-classes out-of-core: install the lazily paged graph
   -- (bounded memory) and recompute best/cost, then format each top e-class by
   -- streaming its page. No full in-memory graph is required.
   r <- liftIO $ withBackendKeepOpen fname $ \db -> do
-         top <- Q.topN db n
-         er  <- loadGraphLazy db
+         dsid <- Q.getOrCreateDataset db ds
+         top  <- Q.topN db dsid n
+         er   <- loadGraphLazy db
          pure (top, er)
   case r of
     (_, Left err) -> pure . SimpleStr $ "db-top failed: " <> err
@@ -521,16 +530,20 @@ run (DBTop fname n varnames) = do
       str <- printSimpleMultiExprs varnames [(eid, IntMap.empty) | (eid, _) <- top]
       pure (SimpleStr str)
 
-run (DBDist fname n) = do
-  r <- liftIO $ withBackend fname $ \db -> Q.distributionCounts db n
+run (DBDist fname ds n) = do
+  r <- liftIO $ withBackend fname $ \db -> do
+         dsid <- Q.getOrCreateDataset db ds
+         Q.distributionCounts db dsid n
   pure . SimpleStr . intercalate "\n" $ ("Size,Count" : [show s <> "," <> show c | (s, c) <- r])
 
 run (DBCount fname op) = do
   c <- liftIO $ withBackend fname $ \db -> Q.countPattern db (T.pack op)
   pure . SimpleStr $ "e-classes containing " <> op <> ": " <> show c
 
-run (DBPareto fname) = do
-  r <- liftIO $ withBackend fname $ \db -> Q.paretoBySize db
+run (DBPareto fname ds) = do
+  r <- liftIO $ withBackend fname $ \db -> do
+         dsid <- Q.getOrCreateDataset db ds
+         Q.paretoBySize db dsid
   pure . SimpleStr . intercalate "\n" $ ("Id,Fitness,Size" : [show eid <> "," <> show f <> "," <> show s | (eid, f, s) <- r])
 
 run (PushFit fname) = do
@@ -580,7 +593,7 @@ run (Import fname dist varnames params) = do
 -- directly into the database (structural, content-addressed) instead of first
 -- building the e-graph in RAM. The produced DB is identical to 'persist' of
 -- the corresponding in-memory seed and can be saturated with 'dbEqSat'.
-run (ImportDB fname eqs dist varnames params) = do
+run (ImportDB fname eqs ds dist varnames params) = do
   let alg = getFormat eqs
       toT  [eq, t, f] = (eq, Prelude.map Prelude.read $ Prelude.filter (not.null) $ splitOn ";" t, fromMaybe (-1.0/0.0) $ readMaybe f)
       toT xss = error $ show xss
@@ -591,7 +604,7 @@ run (ImportDB fname eqs dist varnames params) = do
               theta       = if params then if dist==MSE then pvs <> ps else pvs else ps
           Just (relabelP0 tree, [VU.fromList theta], Just f)
   content <- liftIO $ Prelude.map (toT . splitOn ",") . lines <$> readFile eqs
-  r <- liftIO $ withBackend fname $ \db -> importEqs db (catMaybes (Prelude.map parseOne content))
+  r <- liftIO $ withBackend fname $ \db -> importEqs db ds (catMaybes (Prelude.map parseOne content))
   pure . SimpleStr $ case r of
     Left err -> "db-import failed: " <> err
     Right s  -> "imported " <> show (isExpressions s) <> " expressions (" <> show (isClasses s) <> " e-classes) into " <> fname

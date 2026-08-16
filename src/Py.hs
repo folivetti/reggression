@@ -184,7 +184,7 @@ persistCmd varnames args = run (Persist (unwords args)) >>= printFun varnames []
 dbLoadCmd varnames [] = helpCmd ["db-load"]
 dbLoadCmd varnames args = run (LoadDB (unwords args)) >>= printFun varnames [] [] (NLL Gaussian)
 
-dbImportCmd varnames loss vars (db:eqs:_) = run (ImportDB db eqs loss vars True) >>= printFun varnames [] [] loss
+dbImportCmd varnames loss vars (db:eqs:ds:_) = run (ImportDB db eqs ds loss vars True) >>= printFun varnames [] [] loss
 dbImportCmd varnames _ _ _ = helpCmd ["db-import"]
 
 dbEqSatCmd varnames (fname:n:rs:_) = case readMaybe @Int n of
@@ -192,20 +192,20 @@ dbEqSatCmd varnames (fname:n:rs:_) = case readMaybe @Int n of
                                         Just k  -> run (DBEqSat fname k rs) >>= printFun varnames [] [] (NLL Gaussian)
 dbEqSatCmd varnames _ = helpCmd ["db-eqsat"]
 
-dbTopCmd varnames (fname:n:_) = case readMaybe @Int n of
+dbTopCmd varnames (fname:ds:n:_) = case readMaybe @Int n of
                                     Nothing -> pure "The n must be an integer."
-                                    Just k  -> run (DBTop fname k varnames) >>= printFun varnames [] [] (NLL Gaussian)
+                                    Just k  -> run (DBTop fname ds k varnames) >>= printFun varnames [] [] (NLL Gaussian)
 dbTopCmd varnames _ = helpCmd ["db-top"]
 
-dbDistCmd varnames (fname:n:_) = case readMaybe @Int n of
+dbDistCmd varnames (fname:ds:n:_) = case readMaybe @Int n of
                                     Nothing -> pure "The n must be an integer."
-                                    Just k  -> run (DBDist fname k) >>= printFun varnames [] [] (NLL Gaussian)
+                                    Just k  -> run (DBDist fname ds k) >>= printFun varnames [] [] (NLL Gaussian)
 dbDistCmd varnames _ = helpCmd ["db-distribution"]
 
 dbCountCmd varnames (fname:op:_) = run (DBCount fname op) >>= printFun varnames [] [] (NLL Gaussian)
 dbCountCmd varnames _ = helpCmd ["db-count"]
 
-dbParetoCmd varnames (fname:_) = run (DBPareto fname) >>= printFun varnames [] [] (NLL Gaussian)
+dbParetoCmd varnames (fname:ds:_) = run (DBPareto fname ds) >>= printFun varnames [] [] (NLL Gaussian)
 dbParetoCmd varnames _ = helpCmd ["db-pareto"]
 
 dbPushFitCmd varnames [] = helpCmd ["db-push-fit"]
