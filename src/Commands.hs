@@ -59,6 +59,7 @@ import Algorithm.EqSat.Storage.SQLite ( saveGraph, loadGraphLazy, pushFit, refre
 import Algorithm.EqSat.Storage.Postgres ()
 import Algorithm.EqSat.Storage.Backend ( SqlBackend )
 import Algorithm.EqSat.Storage.Import (importEqs, ImportSummary(..))
+import Algorithm.EqSat.Storage.Stream (streamByOpCount, streamMatchNAry)
 import qualified Algorithm.EqSat.Storage.Query as Q
 
 import Util
@@ -89,6 +90,7 @@ data Command  = Top Int Filter Criteria PatStr
                 | PushFit String String
                 | RefreshFit String String
                 | DBEqSat String String Int String
+                | DBStream String String Int
                | ImportDB String String String Loss String Bool
                | Import String Loss String Bool
               | EqSatStep Int ArgOpt
@@ -615,6 +617,18 @@ run (DBEqSat fname ds iters rs) = do
 run (Import fname dist varnames params) = do
   importCSV dist fname varnames params
   pure NoPrint
+
+-- | PoC: stream the @enode@ table by operator through a SQLite cursor and
+-- report the total count and the first @budget@ matched e-classes. Used to
+-- measure that streaming matching is O(1) memory vs the in-RAM pattern trie.
+run (DBStream fname op budget) = do
+  r <- liftIO $ do
+    db <- open (T.pack fname)
+    n  <- streamByOpCount db (T.pack op)
+    ms <- streamMatchNAry db (T.pack op) budget
+    close db
+    pure (n, ms)
+  pure . SimpleStr $ "count=" <> show (fst r) <> " matches=" <> show (length (snd r))
 
 -- | Out-of-core seed import: stream every expression from the CSV file
 -- directly into the database (structural, content-addressed) instead of first

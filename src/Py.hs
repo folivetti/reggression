@@ -208,13 +208,18 @@ dbCountCmd varnames _ = helpCmd ["db-count"]
 dbParetoCmd varnames (fname:ds:_) = run (DBPareto fname ds) >>= printFun varnames [] [] (NLL Gaussian)
 dbParetoCmd varnames _ = helpCmd ["db-pareto"]
 
+dbStreamCmd varnames (fname:op:n:_) = case readMaybe @Int n of
+                                        Nothing -> pure "The n must be an integer."
+                                        Just k  -> run (DBStream fname op k) >>= printFun varnames [] [] (NLL Gaussian)
+dbStreamCmd varnames _ = helpCmd ["db-stream"]
+
 dbPushFitCmd varnames (fname:ds:_) = run (PushFit fname ds) >>= printFun varnames [] [] (NLL Gaussian)
 dbPushFitCmd varnames _ = helpCmd ["db-push-fit"]
 
 dbRefreshFitCmd varnames (fname:ds:_) = run (RefreshFit fname ds) >>= printFun varnames [] [] (NLL Gaussian)
 dbRefreshFitCmd varnames _ = helpCmd ["db-refresh-fitness"]
 
-commands = ["help", "top", "report", "optimize", "eqsat", "getNExprs", "subtrees", "insert", "count-pattern", "distribution", "modularity", "pareto", "save", "load", "import", "extract-pattern", "distribution-tokens", "getNEclasses", "persist", "db-load", "db-import", "db-eqsat", "db-top", "db-distribution", "db-count", "db-pareto", "db-push-fit", "db-refresh-fitness"]
+commands = ["help", "top", "report", "optimize", "eqsat", "getNExprs", "subtrees", "insert", "count-pattern", "distribution", "modularity", "pareto", "save", "load", "import", "extract-pattern", "distribution-tokens", "getNEclasses", "persist", "db-load", "db-import", "db-eqsat", "db-top", "db-distribution", "db-count", "db-pareto", "db-stream", "db-push-fit", "db-refresh-fitness"]
 
 topHlp = "top N [FILTER...] [CRITERIA] [[not] matching [root] PATTERN] \n \
          \ \n \
@@ -365,6 +370,7 @@ reggression myCmd dataset testData loss' loadFrom dumpTo parseCSV' parseParams c
              , dbDistCmd varnames
              , dbCountCmd varnames
              , dbParetoCmd varnames
+             , dbStreamCmd varnames
              , dbPushFitCmd varnames
              , dbRefreshFitCmd varnames
              ]

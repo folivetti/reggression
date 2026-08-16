@@ -484,6 +484,12 @@ class Reggression():
             SQLite database filename
         '''
         return self.runQuery(f"db-pareto {fname} {self.dataset_name}")
+    def dbStream(self, fname, op, budget=1000):
+        ''' PoC: stream the enode table by operator through a SQLite cursor and
+        report the total count of matching nodes and the first `budget` matched
+        e-classes, to validate O(1)-memory streaming matching.
+        '''
+        return self.runQuery(f"db-stream {fname} {op} {budget}", df=False)
     def dbPushFit(self, fname):
         ''' Write the current e-graph's fitness/DL metrics into the @fit@ table
         of the SQLite database fname (the graph structure is left intact).
