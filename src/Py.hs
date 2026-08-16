@@ -178,18 +178,18 @@ extractPatCmd varnames args = case readMaybe @Int (head args) of
     Nothing -> pure "The id must be an integer."
     Just n  -> run (ExtractPat n) >>= printFun varnames [] [] (NLL Gaussian)
 
-persistCmd varnames [] = helpCmd ["persist"]
-persistCmd varnames args = run (Persist (unwords args)) >>= printFun varnames [] [] (NLL Gaussian)
+persistCmd varnames (fname:ds:_) = run (Persist fname ds) >>= printFun varnames [] [] (NLL Gaussian)
+persistCmd varnames _ = helpCmd ["persist"]
 
-dbLoadCmd varnames [] = helpCmd ["db-load"]
-dbLoadCmd varnames args = run (LoadDB (unwords args)) >>= printFun varnames [] [] (NLL Gaussian)
+dbLoadCmd varnames (fname:ds:_) = run (LoadDB fname ds) >>= printFun varnames [] [] (NLL Gaussian)
+dbLoadCmd varnames _ = helpCmd ["db-load"]
 
 dbImportCmd varnames loss vars (db:eqs:ds:_) = run (ImportDB db eqs ds loss vars True) >>= printFun varnames [] [] loss
 dbImportCmd varnames _ _ _ = helpCmd ["db-import"]
 
-dbEqSatCmd varnames (fname:n:rs:_) = case readMaybe @Int n of
+dbEqSatCmd varnames (fname:ds:n:rs:_) = case readMaybe @Int n of
                                         Nothing -> pure "The n must be an integer."
-                                        Just k  -> run (DBEqSat fname k rs) >>= printFun varnames [] [] (NLL Gaussian)
+                                        Just k  -> run (DBEqSat fname ds k rs) >>= printFun varnames [] [] (NLL Gaussian)
 dbEqSatCmd varnames _ = helpCmd ["db-eqsat"]
 
 dbTopCmd varnames (fname:ds:n:_) = case readMaybe @Int n of
@@ -208,11 +208,11 @@ dbCountCmd varnames _ = helpCmd ["db-count"]
 dbParetoCmd varnames (fname:ds:_) = run (DBPareto fname ds) >>= printFun varnames [] [] (NLL Gaussian)
 dbParetoCmd varnames _ = helpCmd ["db-pareto"]
 
-dbPushFitCmd varnames [] = helpCmd ["db-push-fit"]
-dbPushFitCmd varnames args = run (PushFit (unwords args)) >>= printFun varnames [] [] (NLL Gaussian)
+dbPushFitCmd varnames (fname:ds:_) = run (PushFit fname ds) >>= printFun varnames [] [] (NLL Gaussian)
+dbPushFitCmd varnames _ = helpCmd ["db-push-fit"]
 
-dbRefreshFitCmd varnames [] = helpCmd ["db-refresh-fitness"]
-dbRefreshFitCmd varnames args = run (RefreshFit (unwords args)) >>= printFun varnames [] [] (NLL Gaussian)
+dbRefreshFitCmd varnames (fname:ds:_) = run (RefreshFit fname ds) >>= printFun varnames [] [] (NLL Gaussian)
+dbRefreshFitCmd varnames _ = helpCmd ["db-refresh-fitness"]
 
 commands = ["help", "top", "report", "optimize", "eqsat", "getNExprs", "subtrees", "insert", "count-pattern", "distribution", "modularity", "pareto", "save", "load", "import", "extract-pattern", "distribution-tokens", "getNEclasses", "persist", "db-load", "db-import", "db-eqsat", "db-top", "db-distribution", "db-count", "db-pareto", "db-push-fit", "db-refresh-fitness"]
 

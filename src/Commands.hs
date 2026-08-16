@@ -80,15 +80,15 @@ data Command  = Top Int Filter Criteria PatStr
               | ExtractPat EClassId
               | Save String
               | Load String
-              | Persist String
-              | LoadDB String
+              | Persist String String
+              | LoadDB String String
               | DBTop String String Int [String]
               | DBDist String String Int
               | DBCount String String
                 | DBPareto String String
-                | PushFit String
-                | RefreshFit String
-                | DBEqSat String Int String
+                | PushFit String String
+                | RefreshFit String String
+                | DBEqSat String String Int String
                | ImportDB String String String Loss String Bool
                | Import String Loss String Bool
               | EqSatStep Int ArgOpt
@@ -170,8 +170,16 @@ parseTopDist = stringCI "from top " >> decimal
 -- filename must not contain whitespace
 parseFname = takeWhile1 (\c -> c /= ' ' && c /= '\n')
 
-parsePersist = string "persist " *> (B.unpack <$> parseFname)
-parseLoadDB  = string "db-load " *> (B.unpack <$> parseFname)
+parsePersist = string "persist " >>= \_ -> do
+  fname <- B.unpack <$> parseFname
+  stripSp
+  ds <- B.unpack <$> parseFname
+  pure (Persist fname ds)
+parseLoadDB = string "db-load " >>= \_ -> do
+  fname <- B.unpack <$> parseFname
+  stripSp
+  ds <- B.unpack <$> parseFname
+  pure (LoadDB fname ds)
 parseDBTop   = string "db-top " >>= \_ -> do
   fname <- B.unpack <$> parseFname
   stripSp
@@ -196,15 +204,25 @@ parseDBPareto = string "db-pareto " >>= \_ -> do
   stripSp
   ds <- B.unpack <$> parseFname
   pure (DBPareto fname ds) 
-parsePushFit = string "db-push-fit " *> (PushFit <$> (B.unpack <$> parseFname))
-parseRefreshFit = string "db-refresh-fitness " *> (RefreshFit <$> (B.unpack <$> parseFname))
+parsePushFit = string "db-push-fit " >>= \_ -> do
+  fname <- B.unpack <$> parseFname
+  stripSp
+  ds <- B.unpack <$> parseFname
+  pure (PushFit fname ds)
+parseRefreshFit = string "db-refresh-fitness " >>= \_ -> do
+  fname <- B.unpack <$> parseFname
+  stripSp
+  ds <- B.unpack <$> parseFname
+  pure (RefreshFit fname ds)
 parseDBEqSat = string "db-eqsat " >>= \_ -> do
   fname <- B.unpack <$> parseFname
+  stripSp
+  ds <- B.unpack <$> parseFname
   stripSp
   n <- decimal
   stripSp
   rs <- option "" (B.unpack <$> parseFname)
-  pure (DBEqSat fname n rs)
+  pure (DBEqSat fname ds n rs)
 parseCriteriaDL = (stringCI "by count" >> pure ByCount)
               <|> (stringCI "by fitness" >> pure ByAvgFit)
 
@@ -481,14 +499,16 @@ run (Load fname) = do
 
 -- * SQLite-backed commands
 
-run (Persist fname) = do
+run (Persist fname ds) = do
   eg <- get
-  r  <- liftIO $ withBackend fname $ \db -> saveGraph db eg
+  r  <- liftIO $ withBackend fname $ \db -> do
+         dsid <- Q.getOrCreateDataset db ds
+         saveGraph db dsid eg
   pure . SimpleStr $ case r of
     Left err -> "persist failed: " <> err
     Right () -> "e-graph persisted to " <> fname
 
-run (LoadDB fname) = do
+run (LoadDB fname ds) = do
   -- NB: keep the DB connection alive.  loadGraphLazy builds a paged
   -- e-graph whose 'EClassPageStore' references this very connection, so closing
   -- it (as 'withBackend' does) would leave the graph pointing at a dead
@@ -497,7 +517,9 @@ run (LoadDB fname) = do
   -- bracketOnError closes only on failure; on success the connection is owned
   -- by the e-graph (via '_classStore') and is finalised when the graph is
   -- replaced/GC'd.
-  r <- liftIO $ withBackendKeepOpen fname loadGraphLazy
+  r <- liftIO $ withBackendKeepOpen fname $ \db -> do
+         dsid <- Q.getOrCreateDataset db ds
+         loadGraphLazy db dsid
   case r of
     Left err -> pure . SimpleStr $ "db-load failed: " <> err
     Right eg -> do
@@ -519,7 +541,7 @@ run (DBTop fname ds n varnames) = do
   r <- liftIO $ withBackendKeepOpen fname $ \db -> do
          dsid <- Q.getOrCreateDataset db ds
          top  <- Q.topN db dsid n
-         er   <- loadGraphLazy db
+         er   <- loadGraphLazy db dsid
          pure (top, er)
   case r of
     (_, Left err) -> pure . SimpleStr $ "db-top failed: " <> err
@@ -546,14 +568,18 @@ run (DBPareto fname ds) = do
          Q.paretoBySize db dsid
   pure . SimpleStr . intercalate "\n" $ ("Id,Fitness,Size" : [show eid <> "," <> show f <> "," <> show s | (eid, f, s) <- r])
 
-run (PushFit fname) = do
+run (PushFit fname ds) = do
   eg <- get
-  liftIO $ withBackend fname $ \db -> pushFit db eg
-  pure . SimpleStr $ "fit table written to " <> fname
+  liftIO $ withBackend fname $ \db -> do
+         dsid <- Q.getOrCreateDataset db ds
+         pushFit db dsid eg
+  pure . SimpleStr $ "dataset_fit table written to " <> fname
 
-run (RefreshFit fname) = do
+run (RefreshFit fname ds) = do
   eg <- get
-  r  <- liftIO $ withBackend fname $ \db -> refreshFitness db eg
+  r  <- liftIO $ withBackend fname $ \db -> do
+         dsid <- Q.getOrCreateDataset db ds
+         refreshFitness db dsid eg
   case r of
     Left err -> pure . SimpleStr $ "db-refresh-fitness failed: " <> err
     Right eg' -> do put eg'
@@ -564,12 +590,13 @@ run (RefreshFit fname) = do
 -- The e-graph stays paged: only the structural indexes are resident, every
 -- e-class body is streamed through the store, and class bodies never all live in
 -- memory at once. The rewritten graph is written back with 'saveGraph'.
-run (DBEqSat fname iters rs) = do
+run (DBEqSat fname ds iters rs) = do
   let rules = case rs of
                "params" -> rewritesParams
                _        -> rewrites
   r <- liftIO $ withBackend fname $ \db -> do
-        er <- loadGraphLazy db
+        dsid <- Q.getOrCreateDataset db ds
+        er <- loadGraphLazy db dsid
         case er of
           Left err -> pure (Left err)
           Right eg -> do
@@ -578,7 +605,7 @@ run (DBEqSat fname iters rs) = do
             let go g = execStateT (recalculateBestAllStream myCost >> runEqSat myCost rules iters) g
             eg' <- go eg
             flushStore eg'
-            saveGraph db eg'
+            saveGraph db dsid eg'
             pure (Right ())
   pure . SimpleStr $ case r of
     Left err -> "db-eqsat failed: " <> err

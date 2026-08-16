@@ -407,7 +407,7 @@ class Reggression():
         fname : str
             SQLite database filename
         '''
-        return self.runQuery(f"persist {fname}", df=False)
+        return self.runQuery(f"persist {fname} {self.dataset_name}", df=False)
     def loadDB(self, fname):
         ''' Load an e-graph previously persisted with `persist` into memory.
 
@@ -416,7 +416,7 @@ class Reggression():
         fname : str
             SQLite database filename
         '''
-        return self.runQuery(f"db-load {fname}", df=False)
+        return self.runQuery(f"db-load {fname} {self.dataset_name}", df=False)
     def importDB(self, eqs, fname, extractParameters=True):
         ''' Build an e-graph directly in the SQLite database `fname`,
         out-of-core, by streaming the expressions in the CSV file `eqs` into
@@ -493,7 +493,7 @@ class Reggression():
         fname : str
             SQLite database filename
         '''
-        return self.runQuery(f"db-push-fit {fname}", df=False)
+        return self.runQuery(f"db-push-fit {fname} {self.dataset_name}", df=False)
     def dbRefreshFitness(self, fname):
         ''' Overwrite the in-memory fitness values with those stored in the
         @fit@ table of the SQLite database fname (per e-class, by canonical
@@ -504,7 +504,7 @@ class Reggression():
         fname : str
             SQLite database filename
         '''
-        return self.runQuery(f"db-refresh-fitness {fname}", df=False)
+        return self.runQuery(f"db-refresh-fitness {fname} {self.dataset_name}", df=False)
     def dbEqSat(self, fname, iterations=10, ruleset="default"):
         ''' Run equality saturation directly against a lazily loaded (out-of-core)
         e-graph stored in the SQLite database fname. The e-graph stays paged:
@@ -521,7 +521,7 @@ class Reggression():
         ruleset : str, default="default"
             Rule set to apply: "default" (rewrites) or "params" (rewritesParams)
         '''
-        return self.runQuery(f"db-eqsat {fname} {iterations} {ruleset}", df=False)
+        return self.runQuery(f"db-eqsat {fname} {self.dataset_name} {iterations} {ruleset}", df=False)
     def importFromCSV(self, fname, extractParameters=True):
         ''' import equations from a CSV file
         IMPORTANT: the extension of the CSV file must match the source
