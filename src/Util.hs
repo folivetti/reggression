@@ -101,7 +101,7 @@ fitnessFunRep nIter loss dataTrain _tree = do
 {-# INLINE fitnessFunRep #-}
 
 -- | `createDB` creates a database of patterns from the e-nodes of the e-graph
-createDB :: Monad m => EGraphST m DB
+createDB :: ClassStore m => EGraphST m DB
 createDB = do modify' $ over (eDB . patDB) (const Map.empty)
               ecls <- gets (HM.toList . _eNodeToEClass)
               mapM_ (uncurry addToDB) ecls
@@ -110,10 +110,10 @@ createDB = do modify' $ over (eDB . patDB) (const Map.empty)
 
 -- | `createDBBest` creates a database of patterns from the best e-node of
 -- every e-class
-createDBBest :: Monad m => EGraphST m DB
+createDBBest :: ClassStore m => EGraphST m DB
 createDBBest = do modify' $ over (eDB . patDB) (const Map.empty)
-                  ecls <- gets (Prelude.map (\(eId, ec) -> (_best (_info ec), eId)) . IM.toList . _eClass)
-                  mapM_ (uncurry addToDB) ecls
+                  ecls <- allClasses
+                  mapM_ (\ec -> addToDB (_best (_info ec)) (_eClassId ec)) ecls
                   gets (_patDB . _eDB)
 {-# INLINE createDBBest #-}
 

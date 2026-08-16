@@ -52,6 +52,7 @@ import sys
 import re
 import csv
 import time
+import sqlite3
 import threading
 import tempfile
 
@@ -198,7 +199,11 @@ def main():
     sat_delta_mb = po.delta / 1e6
     sat_peak_mb = po.peak / 1e6
     best_db = float(top_db["Fitness"].iloc[0])
-    print(f"  saturated all {n_seed:,} classes in {sat_s:.1f}s")
+    con = sqlite3.connect(db)
+    n_after = con.execute("SELECT COUNT(*) FROM eclass").fetchone()[0]
+    con.close()
+    print(f"  saturated {n_seed:,} -> {n_after:,} e-classes in {sat_s:.1f}s "
+          f"(seed -> after saturation)")
     print(f"  incremental peak RSS: {sat_delta_mb:.1f} MB "
           f"(bounded by the page cache)")
     print(f"  process peak RSS:     {sat_peak_mb:.1f} MB")
