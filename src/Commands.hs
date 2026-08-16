@@ -604,7 +604,7 @@ run (DBEqSat fname ds iters rs) = do
           Right eg -> do
             -- cost/best are not persisted: recompute them first so rewrites
             -- operate on valid per-class data (imported DBs carry defaults).
-            let go g = execStateT (recalculateBestAllStream myCost >> runEqSat myCost rules iters) g
+            let go g = execStateT (runEqSat myCost rules iters) g
             eg' <- go eg
             flushStore eg'
             saveGraph db dsid eg'
