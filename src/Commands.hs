@@ -92,6 +92,7 @@ data Command  = Top Int Filter Criteria PatStr
                 | RefreshFit String String
                 | DBEqSat String String Int String
                 | DBEqSatFrontier String String Int String
+                | DBInsert String String String
                 | DBStream String String Int
                | ImportDB String String String Loss String Bool
                | Import String Loss String Bool
@@ -236,6 +237,13 @@ parseDBEqSatFrontier = string "db-eqsat-frontier " >>= \_ -> do
   stripSp
   rs <- option "" (B.unpack <$> parseFname)
   pure (DBEqSatFrontier fname ds n rs)
+parseDBInsert = string "db-insert " >>= \_ -> do
+  fname <- B.unpack <$> parseFname
+  stripSp
+  ds <- B.unpack <$> parseFname
+  stripSp
+  expr <- B.unpack . B.pack <$> manyTill anyChar endOfInput
+  pure (DBInsert fname ds expr)
 parseCriteriaDL = (stringCI "by count" >> pure ByCount)
               <|> (stringCI "by fitness" >> pure ByAvgFit)
 
@@ -660,6 +668,31 @@ run (DBEqSatFrontier fname ds iters rs) = do
                   <> " frontier class(es) in " <> show iters
                   <> " iteration(s) of '"
                   <> (if null rs then "default" else rs) <> "' on " <> fname
+
+-- | Local eggp delta: insert a single expression into the DB-backed (paged)
+-- graph. Its subgraph is written through (content-addressed: existing
+-- subexpressions dedup against the live tables) and every genuinely-new class is
+-- marked as part of the re-saturation frontier, so a later 'dbEqSatFrontier'
+-- re-saturates only what changed. O(subgraph) work, O(1) memory.
+run (DBInsert fname ds expr) = do
+  let etree = parseSR TIR "" False (B.pack expr)
+  r <- liftIO $ case etree of
+    Left _     -> pure (Left "no parse")
+    Right tree -> withBackend fname $ \db -> do
+      dsid <- Q.getOrCreateDataset db ds
+      er <- loadGraphLazy db dsid
+      case er of
+        Left err -> pure (Left err)
+        Right eg -> case _classStore eg of
+          Nothing -> pure (Left "db-insert requires a paged graph")
+          Just _  -> do
+            eg' <- execStateT (fromTree myCost tree) eg
+            flushStore eg'
+            saveGraph db dsid eg'
+            pure (Right ())
+  pure . SimpleStr $ case r of
+    Left err  -> "db-insert failed: " <> err
+    Right ()  -> "db-insert added '" <> expr <> "' (subgraph marked as frontier) to " <> fname
 
 run (Import fname dist varnames params) = do
   importCSV dist fname varnames params

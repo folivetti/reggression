@@ -546,6 +546,16 @@ class Reggression():
         eggp loop and a full `dbEqSat` are unaffected.
         '''
         return self.runQuery(f"db-eqsat-frontier {fname} {self.dataset_name} {iterations} {ruleset}", df=False)
+    def dbInsert(self, fname, expr):
+        ''' Local eggp delta: insert a single expression into the DB-backed
+        (out-of-core) e-graph in `fname`. Its subgraph is written through and
+        content-addressed (existing subexpressions dedup against the live
+        tables); every genuinely-new class is marked as part of the
+        re-saturation frontier, so a later `dbEqSatFrontier` re-saturates only
+        what changed. O(subgraph) work, O(1) memory. The pure in-memory `insert`
+        is unaffected.
+        '''
+        return self.runQuery(f"db-insert {fname} {self.dataset_name} {expr}", df=False)
     def importFromCSV(self, fname, extractParameters=True):
         ''' import equations from a CSV file
         IMPORTANT: the extension of the CSV file must match the source
