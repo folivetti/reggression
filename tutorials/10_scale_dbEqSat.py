@@ -7,9 +7,9 @@ srtree-db:
 
   * ``importDB`` builds the seed e-graph **directly in SQLite**, streaming the
     candidate equations straight into the database (content-addressed,
-    structural), so *no in-memory e-graph is ever built* and peak memory grows
-    with the graph *skeleton* (one node + parent edges per class), not with
-    full class bodies.
+    structural), so *no in-memory e-graph is ever built*: the dedup index,
+    child lookups and parent edges all live in the database, so peak import
+    memory is **bounded** (basically constant in the number of equations).
   * ``dbEqSat`` runs equality saturation over that database fully *out of core*:
     it lazily loads the paged graph and streams every e-class body through a
     bounded page cache, so the saturated graph never all lives in RAM.
@@ -34,7 +34,7 @@ The default run seeds ~40k e-classes (20k equations) and finishes in well under
 a minute. Both ``importDB`` and ``dbEqSat`` scale smoothly into the hundreds of
 thousands of e-classes; the demo keeps the default comfortably small so the
 whole pipeline (import -> saturate -> query) runs quickly and stays well within
-RAM (the import peak is proportional to the class skeleton).
+RAM (the import peak is bounded, independent of the number of equations).
 
 Runtime/scaling note: eqsat's n-ary matcher is work-bounded (a per-rule cap on
 how many classes it scans), so a saturation iteration's cost stays proportional
@@ -182,7 +182,7 @@ def main():
     print(f"  seed graph: ~{n_seed:,} e-classes in {import_s / 60:.1f} min")
     print(f"  wrote {db_mb:.1f} MB database")
     print(f"  import peak RSS: {import_rss_mb:.1f} MB "
-          f"(graph skeleton only -- class bodies stay on disk)")
+          f"(bounded -- dedup index and parents stream to disk)")
 
     # --- Step 2: run the FULL equality saturation OUT-OF-CORE -------------
     #     dbEqSat loads the graph lazily from the DB and runs eqsat against the
@@ -216,7 +216,7 @@ def main():
     print("\n" + "=" * 64)
     print(f"Scalability: ~{n_seed:,} e-classes, all handled out-of-core")
     print(f"  out-of-core import : {import_rss_mb:8.1f} MB peak "
-          f"({import_s / 60:.1f} min)  <- graph skeleton only, no in-memory graph")
+          f"({import_s / 60:.1f} min)  <- bounded, independent of graph size")
     print(f"  out-of-core dbEqSat : {sat_delta_mb:8.1f} MB incremental "
           f"({sat_s:.1f}s)  <- bounded by the page cache")
     print("=" * 64)
