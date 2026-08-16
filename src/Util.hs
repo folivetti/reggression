@@ -365,7 +365,7 @@ headerCountCLI = titlesH $ Prelude.map bold ["Pattern", "Count", "Avg. Fitness"]
 columnsT = [numCol, fixedLeftCol 50]
 headerTreesCLI = titlesH $ Prelude.map bold ["Id", "Expression"]
 
-showModules :: Monad m => [String] -> IM.IntMap (Int, Int) -> Bool -> EGraphST m [String]
+showModules :: ClassStore m => [String] -> IM.IntMap (Int, Int) -> Bool -> EGraphST m [String]
 showModules varnames m latex = forM (IM.toList m) showSingleModule
   where
     showSingleModule (eid, (0, ix)) = do s <- showModular varnames (IM.delete eid m) eid latex
@@ -374,7 +374,7 @@ showModules varnames m latex = forM (IM.toList m) showSingleModule
                                          pure $ "f_{" <> show ix <> "}(" <> (if latex then "\\theta" else "θ") <> ") = " <> s
 
 
-showModular :: Monad m => [String] -> IM.IntMap (Int, Int) -> EClassId -> Bool -> EGraphST m String
+showModular :: ClassStore m => [String] -> IM.IntMap (Int, Int) -> EClassId -> Bool -> EGraphST m String
 showModular varnames mNames eid' latex = fst <$> go eid' 0
   where
     goList [] ix = pure ([], ix)
@@ -469,7 +469,7 @@ showModular varnames mNames eid' latex = fst <$> go eid' 0
                   ENAry op xs -> do (ss, thetaIx') <- goList (expandedList xs) thetaIx
                                     pure (if null ss then "" else foldl1 (showOp (toOp op)) ss, thetaIx')
 
-showLatexTree :: Monad m => [String] -> Fix SRTree -> EGraphST m String
+showLatexTree :: ClassStore m => [String] -> Fix SRTree -> EGraphST m String
 showLatexTree varnames = showNormal
   where
     showLower x = Prelude.map toLower $ show x
@@ -562,7 +562,7 @@ cleanAllDBs = do
           . over (eDB . dlRangeDB) (const Set.empty)
           . over (eDB . sizeDLDB) (const IM.empty)
 
-unsetFitness :: Monad m => EClassId -> EGraphST m ()
+unsetFitness :: ClassStore m => EClassId -> EGraphST m ()
 unsetFitness eId = do
   --eId <- canonical eId'
   ec <- gets ((IM.! eId) . _eClass)

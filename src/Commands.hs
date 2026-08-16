@@ -858,7 +858,7 @@ countPattern pat = do
 
 getEvaluated ecs = getParentsOf (const True) (IntSet.fromList ecs) 500000 ecs
 
-getAllPatterns :: Monad m => (Int -> Bool) -> EClassId -> EGraphST m (Map.Map Pattern Int)
+getAllPatterns :: ClassStore m => (Int -> Bool) -> EClassId -> EGraphST m (Map.Map Pattern Int)
 getAllPatterns pSz eid = do
    eid' <- canonical eid
    best <- gets (_best . _info . (IntMap.! eid') . _eClass)
@@ -885,7 +885,7 @@ getAllPatterns pSz eid = do
                             [(relabelVarPat $ Fixed (Bin (toOp op) l' r'), min vl vr)
                             | (l', vl) <- Map.toList pL, (r', vr) <- Map.toList pR]
 
-getAllTokens :: Monad m => EClassId -> EGraphST m (Map.Map Pattern Int)
+getAllTokens :: ClassStore m => EClassId -> EGraphST m (Map.Map Pattern Int)
 getAllTokens eid = do
   eid' <- canonical eid
   best <- gets (_best . _info . (IntMap.! eid') . _eClass)
@@ -903,12 +903,12 @@ getAllTokens eid = do
                       pure $ Map.insertWith (+) (Fixed (Bin (toOp op) (VarPat 'A') (VarPat 'B'))) 1
                            $ Map.unionsWith (+) pats
 
-isNotTrivial :: Monad m => Int -> EClassId -> EGraphST m Bool
+isNotTrivial :: ClassStore m => Int -> EClassId -> EGraphST m Bool
 isNotTrivial n ec = do
   c <- gets (_consts . _info . (IntMap.! ec) . _eClass)
   m <- gets (_size . _info . (IntMap.! ec) . _eClass)
   pure (c == NotConst && m >= n)
-removeNotTrivial :: Monad m => Int -> [EClassId] -> EGraphST m [EClassId]
+removeNotTrivial :: ClassStore m => Int -> [EClassId] -> EGraphST m [EClassId]
 removeNotTrivial n [] = pure []
 removeNotTrivial n (ec:ecs) = do
   b <- isNotTrivial n ec
@@ -933,7 +933,7 @@ mapOfNames maxSz m' =
   let m = IntMap.toList $ IntMap.filter (\(cnt,ps,sz) -> cnt > 1 && maxSz sz) m'
   in IntMap.fromList $ Prelude.zipWith (\(k, (a,b,c)) ix -> (k, (b,ix))) m [0..]
 
-extractEClassList :: Monad m => EClassId -> EGraphST m (IntMap.IntMap (Int, Int, Int))
+extractEClassList :: ClassStore m => EClassId -> EGraphST m (IntMap.IntMap (Int, Int, Int))
 extractEClassList ec' = do
   ec   <- canonical ec'
   best <- gets (_best . _info . (IntMap.! ec) . _eClass) >>= canonize
