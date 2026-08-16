@@ -10,6 +10,15 @@ import os
 import numpy as np
 import pandas as pd
 
+# GHC auto-initializes the RTS when the shared library is loaded (during the
+# _binding import below) and reads the GHCRTS env var for flags; if unset,
+# defaults are used. Set a default here so the embedded runtime uses tighter GC
+# (-F lower heap growth factor, -A smaller nursery): out-of-core eqsat reads
+# every class body, and GHC otherwise keeps a large reserved heap high-water
+# mark (which it does not return to the OS), inflating RSS.
+if os.environ.get("GHCRTS") is None:
+    os.environ["GHCRTS"] = "-F1.2"
+
 from ._binding import (
     unsafe_hs_reggression_version,
     unsafe_hs_reggression_main,
@@ -53,7 +62,7 @@ def main(args: List[str] = []) -> int:
         return unsafe_hs_reggression_main()
 
 def reggression_run(myCmd : str, dataset : str, testData : str, loss : str, loadFrom : str, dumpTo : str, parseCSV : str, parseParams : int, calcDL : int, calcFit : int, varnames : list) -> str:
-    with hs_rts_init():
+    with hs_rts_init(["reggression", "+RTS", "-F1.2", "-RTS"]):
         return unsafe_hs_reggression_run(myCmd, dataset, testData, loss, loadFrom, dumpTo, parseCSV, parseParams, calcDL, calcFit, varnames)
 
 class Reggression():
