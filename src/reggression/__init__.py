@@ -552,10 +552,28 @@ class Reggression():
         content-addressed (existing subexpressions dedup against the live
         tables); every genuinely-new class is marked as part of the
         re-saturation frontier, so a later `dbEqSatFrontier` re-saturates only
-        what changed. O(subgraph) work, O(1) memory. The pure in-memory `insert`
-        is unaffected.
+        what changed. Returns the root e-class id (as an int), symmetric with
+        the in-memory `insert`. O(subgraph) work, O(1) memory.
+
+        Parameters
+        ----------
+        fname : str
+            SQLite database filename
+        expr : str
+            Expression to insert
+
+        Returns
+        -------
+        int : the root e-class id
         '''
-        return self.runQuery(f"db-insert {fname} {self.dataset_name} {expr}", df=False)
+        v = self.runQuery(f"db-insert {fname} {self.dataset_name} {expr}", df=False)
+        return int(str(v).strip())
+    def dbSetFit(self, fname, eid, fitness):
+        ''' Record the fitness of a single e-class in `dataset_fit`, so a
+        newly-inserted DB expression (from `dbInsert`) can be ranked by the query
+        layer once the eggp loop has evaluated it.
+        '''
+        return self.runQuery(f"db-set-fit {fname} {self.dataset_name} {eid} {fitness}", df=False)
     def importFromCSV(self, fname, extractParameters=True):
         ''' import equations from a CSV file
         IMPORTANT: the extension of the CSV file must match the source

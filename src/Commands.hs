@@ -58,7 +58,7 @@ import Database.PostgreSQL.LibPQ ( Connection, connectdb, finish )
 import Algorithm.EqSat.Storage.SQLite ( saveGraph, loadGraphLazy, pushFit, refreshFitness, flushStore )
 import Algorithm.EqSat.Storage.Postgres ()
 import Algorithm.EqSat.Storage.Backend ( SqlBackend )
-import Algorithm.EqSat.Storage.Import (importEqs, ImportSummary(..))
+import Algorithm.EqSat.Storage.Import (importEqs, ImportSummary(..), recordExpressionIndex)
 import Algorithm.EqSat.Storage.Stream (streamByOpCount, streamMatchNAry)
 import Algorithm.EqSat.Storage.ClassStore (loadFrontierRows)
 import qualified Algorithm.EqSat.Storage.Query as Q
@@ -93,6 +93,7 @@ data Command  = Top Int Filter Criteria PatStr
                 | DBEqSat String String Int String
                 | DBEqSatFrontier String String Int String
                 | DBInsert String String String
+                | DBSetFit String String Int Double
                 | DBStream String String Int
                | ImportDB String String String Loss String Bool
                | Import String Loss String Bool
@@ -244,6 +245,15 @@ parseDBInsert = string "db-insert " >>= \_ -> do
   stripSp
   expr <- B.unpack . B.pack <$> manyTill anyChar endOfInput
   pure (DBInsert fname ds expr)
+parseDBSetFit = string "db-set-fit " >>= \_ -> do
+  fname <- B.unpack <$> parseFname
+  stripSp
+  ds <- B.unpack <$> parseFname
+  stripSp
+  eid <- decimal
+  stripSp
+  fit <- double
+  pure (DBSetFit fname ds eid fit)
 parseCriteriaDL = (stringCI "by count" >> pure ByCount)
               <|> (stringCI "by fitness" >> pure ByAvgFit)
 
@@ -673,7 +683,10 @@ run (DBEqSatFrontier fname ds iters rs) = do
 -- graph. Its subgraph is written through (content-addressed: existing
 -- subexpressions dedup against the live tables) and every genuinely-new class is
 -- marked as part of the re-saturation frontier, so a later 'dbEqSatFrontier'
--- re-saturates only what changed. O(subgraph) work, O(1) memory.
+-- re-saturates only what changed. The root e-class id is returned (symmetric
+-- with the in-memory 'insert') so the eggp loop can track / evaluate it, and the
+-- expression is recorded in @expression_index@ (item: "was this seen?").
+-- O(subgraph) work, O(1) memory.
 run (DBInsert fname ds expr) = do
   let etree = parseSR TIR "" False (B.pack expr)
   r <- liftIO $ case etree of
@@ -686,13 +699,23 @@ run (DBInsert fname ds expr) = do
         Right eg -> case _classStore eg of
           Nothing -> pure (Left "db-insert requires a paged graph")
           Just _  -> do
-            eg' <- execStateT (fromTree myCost tree) eg
+            (eid, eg') <- runStateT (fromTree myCost tree) eg
             flushStore eg'
+            recordExpressionIndex db dsid eid
             saveGraph db dsid eg'
-            pure (Right ())
+            pure (Right eid)
   pure . SimpleStr $ case r of
     Left err  -> "db-insert failed: " <> err
-    Right ()  -> "db-insert added '" <> expr <> "' (subgraph marked as frontier) to " <> fname
+    Right eid -> show eid
+
+-- | Set the fitness of a single e-class in @dataset_fit@, so a newly-inserted
+-- DB expression (see 'DBInsert') can be ranked by the query layer once the eggp
+-- loop has evaluated it. Writes only that class's row (structure untouched).
+run (DBSetFit fname ds eid fit) =
+  liftIO $ withBackend fname $ \db -> do
+    dsid <- Q.getOrCreateDataset db ds
+    Q.writeDatasetFit db dsid eid (Just fit) Nothing "" 0
+    pure (SimpleStr ("db-set-fit " <> show eid <> " <- " <> show fit))
 
 run (Import fname dist varnames params) = do
   importCSV dist fname varnames params

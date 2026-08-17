@@ -200,6 +200,11 @@ dbEqSatFrontierCmd varnames _ = helpCmd ["db-eqsat-frontier"]
 dbInsertCmd varnames (fname:ds:args) = run (DBInsert fname ds (unwords args)) >>= printFun varnames [] [] (NLL Gaussian)
 dbInsertCmd varnames _ = helpCmd ["db-insert"]
 
+dbSetFitCmd varnames (fname:ds:eid:fit:_) = case (readMaybe @Int eid, readMaybe @Double fit) of
+    (Just e, Just f) -> run (DBSetFit fname ds e f) >>= printFun varnames [] [] (NLL Gaussian)
+    _                -> pure "db-set-fit requires EID FITNESS as numbers"
+dbSetFitCmd varnames _ = helpCmd ["db-set-fit"]
+
 dbTopCmd varnames (fname:ds:n:_) = case readMaybe @Int n of
                                     Nothing -> pure "The n must be an integer."
                                     Just k  -> run (DBTop fname ds k varnames) >>= printFun varnames [] [] (NLL Gaussian)
@@ -227,7 +232,7 @@ dbPushFitCmd varnames _ = helpCmd ["db-push-fit"]
 dbRefreshFitCmd varnames (fname:ds:_) = run (RefreshFit fname ds) >>= printFun varnames [] [] (NLL Gaussian)
 dbRefreshFitCmd varnames _ = helpCmd ["db-refresh-fitness"]
 
-commands = ["help", "top", "report", "optimize", "eqsat", "getNExprs", "subtrees", "insert", "count-pattern", "distribution", "modularity", "pareto", "save", "load", "import", "extract-pattern", "distribution-tokens", "getNEclasses", "persist", "db-load", "db-import", "db-eqsat", "db-eqsat-frontier", "db-insert", "db-top", "db-distribution", "db-count", "db-pareto", "db-stream", "db-push-fit", "db-refresh-fitness"]
+commands = ["help", "top", "report", "optimize", "eqsat", "getNExprs", "subtrees", "insert", "count-pattern", "distribution", "modularity", "pareto", "save", "load", "import", "extract-pattern", "distribution-tokens", "getNEclasses", "persist", "db-load", "db-import", "db-eqsat", "db-eqsat-frontier", "db-insert", "db-set-fit", "db-top", "db-distribution", "db-count", "db-pareto", "db-stream", "db-push-fit", "db-refresh-fitness"]
 
 topHlp = "top N [FILTER...] [CRITERIA] [[not] matching [root] PATTERN] \n \
          \ \n \
@@ -376,6 +381,7 @@ reggression myCmd dataset testData loss' loadFrom dumpTo parseCSV' parseParams c
               , dbEqSatCmd varnames
               , dbEqSatFrontierCmd varnames
               , dbInsertCmd varnames
+              , dbSetFitCmd varnames
               , dbTopCmd varnames
              , dbDistCmd varnames
              , dbCountCmd varnames
