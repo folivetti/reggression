@@ -567,8 +567,10 @@ run (LoadDB fname ds) = do
 run (DBTop fname ds n varnames) = do
 
   -- Render the top-N e-classes out-of-core: install the lazily paged graph
-  -- (bounded memory) and recompute best/cost, then format each top e-class by
-  -- streaming its page. No full in-memory graph is required.
+  -- (bounded memory) and recompute best/cost, then format each top e-class.
+  -- Uses a simple, cycle/budget-safe renderer (Id, Expression, Fitness) so a
+  -- supersaturated graph can never hang or explode the full LaTeX/python/modular
+  -- printing path.
   r <- liftIO $ withBackendKeepOpen fname $ \db -> do
          dsid <- Q.getOrCreateDataset db ds
          top  <- Q.topN db dsid n
@@ -580,9 +582,10 @@ run (DBTop fname ds n varnames) = do
       put eg
       recalculateBestAllStream myCost
       flushGraphStore
-      str <- printSimpleMultiExprs varnames [(eid, IntMap.empty) | (eid, _) <- top]
-      pure (SimpleStr str)
-
+      rows <- forM top $ \(eid, fit) -> do
+                t <- showExpr <$> getBestExpr eid
+                pure (intercalate "," [show eid, t, show fit])
+      pure . SimpleStr $ intercalate "\n" ("Id,Expression,Fitness" : rows)
 run (DBDist fname ds n) = do
   r <- liftIO $ withBackend fname $ \db -> do
          dsid <- Q.getOrCreateDataset db ds

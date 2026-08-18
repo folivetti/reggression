@@ -94,7 +94,7 @@ def _write_seed(path, rng, n_seed):
     with open(path, "w", newline="") as fh:
         w = csv.writer(fh)
         for _ in range(n_seed):
-            w.writerow([_random_expr(rng, rng.choice([1, 2, 3])), "", "-10.0"])
+            w.writerow([_random_expr(rng, rng.choice([1, 2, 3, 4, 4])), "", "-10.0"])
 
 
 def fitness_of(expr):
@@ -141,10 +141,7 @@ def run_search_session(egg, db, rng, n_candidates, every=10):
     """
     inserted = []
     for i in range(n_candidates):
-        # shallow candidates: deep supersaturated expressions can make the
-        # out-of-core extraction in dbTop very expensive, so keep the demo's
-        # candidates small and robust.
-        expr = _random_expr(rng, rng.choice([1, 2, 3]))
+        expr = _random_expr(rng, rng.choice([2, 3, 4, 5]))
         # --- DB-backed insert: content-addressed subgraph, marks the frontier -
         eid = egg.dbInsert(db, expr)
         # --- record the fitness (from the loop's own evaluation) --------------
@@ -167,7 +164,7 @@ def main():
 
     rng1 = np.random.default_rng(11)
     seed = "eggp_db_seed.tir"
-    _write_seed(seed, rng1, 180)
+    _write_seed(seed, rng1, 300)
 
     egg = Reggression(dataset=data_csv, loss="MSE")
 
