@@ -81,6 +81,7 @@ foreign-library _binding
     , srtree >= 2.0.1.5
     , srtree-db >= 0.1.0.0
     , direct-sqlite >= 2.3.0
+    , postgresql-libpq
     , text
     , statistics >=0.16.2.1 && <0.17
     , transformers >=0.6.1.0 && <0.7

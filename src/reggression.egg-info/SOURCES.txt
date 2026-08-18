@@ -16,4 +16,5 @@ src/reggression.egg-info/requires.txt
 src/reggression.egg-info/top_level.txt
 test/test_modularity.py
 test/test_pyreggression.py
+test/test_pyreggression_db.py
 test/test_pyreggression_eqs.py
