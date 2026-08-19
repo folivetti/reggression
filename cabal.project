@@ -1,5 +1,3 @@
 packages: .
-          ../srtree
-          ../srtree-db
 allow-newer: table-layout:*, haskeline:*, aeson:*
 allow-newer: *

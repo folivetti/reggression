@@ -10,7 +10,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "reggression"
-version = "1.0.11"
+version = "2.0.0"
 authors = [{ name = "Fabricio Olivetti", email = "folivetti@users.noreply.github.com" }]
 description = "Python Wheels for reggression algorithm."
 readme = "README.md"
@@ -25,6 +25,7 @@ classifiers = [
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
   "Programming Language :: Python :: Implementation :: CPython",
 ]
 dependencies = ["typing_extensions >=4.6,<5; python_version<'3.8'", "numpy >=2", "pandas >=2.2", "scikit-learn >=1.6"]
@@ -78,11 +79,8 @@ skip = [
   # PyPy builds do not work.
   "pp*",
 ]
-manylinux-aarch64-image = "folivetti/manylinux_2_28_ghc9121_aarch64"
-manylinux-i686-image = "folivetti/manylinux2014_ghc9121_i686"
-manylinux-x86_64-image = "folivetti/manylinux_2_28_ghc9121_x86_64"
-# manylinux-x86_64-image = "folivetti/manylinux2014_ghc9121_x86_64"
-musllinux-x86_64-image = "folivetti/musllinux_1_1_ghc9121_x86_64"
+manylinux-x86_64-image = "manylinux_2_34"
+manylinux-aarch64-image = "manylinux_2_34"
 
 [tool.cibuildwheel.windows]
 repair-wheel-command = "delvewheel repair -w {dest_dir} {wheel} --add-path C:\\nlopt\\bin"
@@ -103,9 +101,9 @@ where = ["src"]
 legacy_tox_ini = """
 [tox]
 min_version = 4
-env_list = py{39,310,311,312,313}-{lin,mac,win}
+env_list = py{39,310,311,312,313,314}-{lin,mac,win}
 
-[testenv:py{39,310,311,312,313}-{lin,mac,win}]
+[testenv:py{39,310,311,312,313,314}-{lin,mac,win}]
 package = external
 package_env = build-{env_name}
 platform =
@@ -119,7 +117,7 @@ extras =
 commands =
   {env_python} -m pytest {posargs}
 
-[testenv:build-py{39,310,311,312,313}-{lin,mac,win}]
+[testenv:build-py{39,310,311,312,313,314}-{lin,mac,win}]
 deps =
   build
   auditwheel; sys_platform == 'linux'
@@ -132,6 +130,7 @@ package_glob =
   py311-lin: {package_root}{/}dist{/}*cp311*manylinux*.whl
   py312-lin: {package_root}{/}dist{/}*cp312*manylinux*.whl
   py313-lin: {package_root}{/}dist{/}*cp313*manylinux*.whl
+  py314-lin: {package_root}{/}dist{/}*cp314*manylinux*.whl
   py37-mac: {package_root}{/}dist{/}*cp37*macosx*.whl
   py38-mac: {package_root}{/}dist{/}*cp38*macosx*.whl
   py39-mac: {package_root}{/}dist{/}*cp39*macosx*.whl
@@ -139,6 +138,7 @@ package_glob =
   py311-mac: {package_root}{/}dist{/}*cp311*macosx*.whl
   py312-mac: {package_root}{/}dist{/}*cp312*macosx*.whl
   py313-mac: {package_root}{/}dist{/}*cp313*macosx*.whl
+  py314-mac: {package_root}{/}dist{/}*cp314*macosx*.whl
   py37-win: {package_root}{/}dist{/}*cp37*win*.whl
   py38-win: {package_root}{/}dist{/}*cp38*win*.whl
   py39-win: {package_root}{/}dist{/}*cp39*win*.whl
@@ -146,6 +146,7 @@ package_glob =
   py311-win: {package_root}{/}dist{/}*cp311*win*.whl
   py312-win: {package_root}{/}dist{/}*cp312*win*.whl
   py313-win: {package_root}{/}dist{/}*cp313*win*.whl
+  py314-win: {package_root}{/}dist{/}*cp314*win*.whl
 allowlist_externals =
   sh
 commands =
