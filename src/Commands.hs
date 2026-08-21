@@ -5,7 +5,7 @@
 
 module Commands where
 
-import Control.Applicative ((<|>))
+import Control.Applicative ((<|>), optional)
 import Data.Attoparsec.ByteString.Char8 hiding ( match )
 import Data.Attoparsec.Expr
 import qualified Data.ByteString.Char8 as B
@@ -38,6 +38,8 @@ import Text.ParseSR (SRAlgs(..), parseSR, Output(..), showOutput)
 import System.Random
 
 import Algorithm.SRTree.Likelihoods
+import Algorithm.SRTree.ConfidenceIntervals (CIType(..), PType(..), paramCI, getAllProfiles, getStatsFromModel, CI(..), BasicStats(..))
+import Algorithm.SRTree.Compile (compileTree)
 
 import Algorithm.EqSat
 import Algorithm.EqSat.Egraph
@@ -64,30 +66,29 @@ import Algorithm.EqSat.Storage.ClassStore (loadFrontierRows)
 import qualified Algorithm.EqSat.Storage.Query as Q
 
 import Util
-import Debug.Trace
 -- * Parsing
 
 -- top 5 by fitness|mdl [less than 5 params, less than 10 nodes]
-data Command  = Top Int Filter Criteria PatStr
+data Command  = Top Int Filter Criteria PatStr Bool
               | Distribution FilterDist (Maybe Limit) CriteriaDist Int Int
               | DistTokens Int
               | Modular Int FilterDist Criteria
               -- below these will not be a parsable command
-              | Report EClassId ArgOpt
-              | Optimize EClassId Int ArgOpt
+              | Report EClassId ArgOpt Bool
+              | Optimize EClassId Int ArgOpt Bool
               | Insert String ArgOpt
               | Subtrees EClassId
-              | Pareto Criteria
+              | Pareto Criteria Bool
               | CountPat String
               | ExtractPat EClassId
               | Save String
               | Load String
               | Persist String String
               | LoadDB String String
-              | DBTop String String Int [String]
+              | DBTop String String Int [String] Bool (Maybe String)
               | DBDist String String Int
               | DBCount String String
-                | DBPareto String String
+                | DBPareto String String Bool (Maybe String)
                 | PushFit String String
                 | RefreshFit String String
                 | DBEqSat String String Int String
@@ -134,7 +135,11 @@ parseTop = do n <- decimal
               pats <- case pats' of
                         [] -> pure $ NoPat
                         (x:_) -> pure $ x
-              pure $ Top n (getAll . mconcat filters) criteria pats
+              stripSp
+              ci <- parseWithCI
+              pure $ Top n (getAll . mconcat filters) criteria pats ci
+
+parseWithCI = (string "with" >> stripSp >> string "ci" >> pure True) <|> pure False
 
 parseDist = do filters' <- many' parseFilterDist
                let filters = if null filters'
@@ -192,7 +197,13 @@ parseDBTop   = string "db-top " >>= \_ -> do
   ds <- B.unpack <$> parseFname
   stripSp
   n <- decimal
-  pure (DBTop fname ds n ["x"])
+  stripSp
+  ci <- parseWithCI
+  mData <- if ci
+           then do stripSp
+                   optional (string "data" >> stripSp >> fmap B.unpack parseFname)
+           else pure Nothing
+  pure (DBTop fname ds n ["x"] ci mData)
 parseDBDist  = string "db-distribution " >>= \_ -> do
   fname <- B.unpack <$> parseFname
   stripSp
@@ -209,7 +220,13 @@ parseDBPareto = string "db-pareto " >>= \_ -> do
   fname <- B.unpack <$> parseFname
   stripSp
   ds <- B.unpack <$> parseFname
-  pure (DBPareto fname ds) 
+  stripSp
+  ci <- parseWithCI
+  mData <- if ci
+           then do stripSp
+                   optional (string "data" >> stripSp >> fmap B.unpack parseFname)
+           else pure Nothing
+  pure (DBPareto fname ds ci mData)
 parsePushFit = string "db-push-fit " >>= \_ -> do
   fname <- B.unpack <$> parseFname
   stripSp
@@ -400,13 +417,12 @@ data PrintResults = MultiExprs [(EClassId, IntMap.IntMap (Int, Int))] | SingleEx
 
 -- running
 run :: Command -> MyEGraph PrintResults
-run (Top n filters criteria NoPat) = do
+run (Top n filters criteria NoPat ci) = do
    let getFun = if criteria == ByFitness then getTopFitEClassThat else getTopDLEClassThat
    ids <- getFun n filters
    pure $ MultiExprs $ [(i, IntMap.empty) | i <- reverse ids]
-   -- printSimpleMultiExprs (reverse ids)
 
-run (Top n filters criteria withPat) = do
+run (Top n filters criteria withPat ci) = do
    let (pat', getFun, isParents) =
           case withPat of
             PatStr p parent     -> (p, if criteria == ByFitness then getTopFitEClassIn else getTopDLEClassIn, parent)
@@ -467,10 +483,11 @@ run (Modular n pSz criteria) = do
   pure . MultiExprs $ [(myId, myM IntMap.! myId) | myId <- ids]
 
 
-run (Report eid (dist, trainData, testData)) = do eid' <- canonical eid
-                                                  pure . SingleExpr $ eid' -- printExpr isCLI trainData testData dist eid
+run (Report eid (dist, trainData, testData) ci) = do
+  eid' <- canonical eid
+  pure . SingleExpr $ eid'
 
-run (Optimize eid nIters (dist, trainDatas, testData)) = do -- dist trainData testData
+run (Optimize eid nIters (dist, trainDatas, testData) ci) = do
    t <- relabelParams <$> getBestExpr eid
    --(f, thetas) <- fitnessMV False 1 nIters dist (Prelude.zip trainDatas testData) t
    let dataTrainsVals = Prelude.zip trainDatas testData
@@ -488,7 +505,7 @@ run (Insert expr argOpt) = do
   case etree of
     Left _     -> pure . SimpleStr $ "no parse for " <> expr
     Right tree -> do eid <- fromTree myCost tree
-                     run (Optimize eid 100 argOpt)
+                     run (Optimize eid 100 argOpt False)
 
 run (Subtrees eid') = do
    eid <- canonical eid'
@@ -499,13 +516,12 @@ run (Subtrees eid') = do
              --printSimpleMultiExprs isCLI ids
      else pure . SimpleStr $ "Invalid id."
 
-run (Pareto crit) = do
+run (Pareto crit ci) = do
    maxSize <- gets (fst . IntMap.findMax . _sizeFitDB . _eDB)
    ecs <- case crit of
             ByFitness -> getParetoEcsUpTo 1 maxSize
             ByDL      -> getParetoDLEcsUpTo 1 maxSize
    pure . MultiExprs $ [(i, IntMap.empty) | i <- ecs]
-   -- printSimpleMultiExprs isCLI ecs
 
 run (CountPat spat) = do
   let etree = parsePat $ B.pack spat
@@ -564,7 +580,7 @@ run (LoadDB fname ds) = do
       flushGraphStore
       pure (SimpleStr ("e-graph loaded from " <> fname))
 
-run (DBTop fname ds n varnames) = do
+run (DBTop fname ds n varnames ci mData) = do
 
   -- Render the top-N e-classes out-of-core: install the lazily paged graph
   -- (bounded memory) and recompute best/cost, then format each top e-class.
@@ -576,6 +592,14 @@ run (DBTop fname ds n varnames) = do
          top  <- Q.topN db dsid n
          er   <- loadGraphLazy db dsid
          pure (top, er)
+
+  -- Load dataset for CI computation if requested
+  mDataLoaded <- case (ci, mData) of
+    (True, Just dataPath) -> do
+      ((xTr, yTr, _, _), (mYErr, _), _, _) <- liftIO $ loadDataset dataPath True
+      pure $ Just (xTr, yTr, mYErr)
+    _ -> pure Nothing
+
   case r of
     (_, Left err) -> pure . SimpleStr $ "db-top failed: " <> err
     (top, Right eg) -> do
@@ -584,7 +608,24 @@ run (DBTop fname ds n varnames) = do
       flushGraphStore
       rows <- forM top $ \(eid, fit) -> do
                 t <- showExpr <$> getBestExpr eid
-                pure (intercalate "," [show eid, t, show fit])
+                let base = intercalate "," [show eid, t, show fit]
+                case (ci, mDataLoaded) of
+                  (True, Just (xTr, yTr, mYErr)) -> do
+                    tree <- getBestExpr eid
+                    thetas <- getTheta eid
+                    let theta = if null thetas then VU.empty else head thetas
+                        dist = Gaussian  -- default distribution for CI
+                        nSamples = VU.length yTr
+                        et = compileTree dist xTr yTr mYErr tree
+                        stats = getStatsFromModel dist mYErr xTr yTr tree theta
+                        profiles = getAllProfiles Constrained et theta (_stdErr stats) [] 0.05
+                        ciVals = paramCI (Profile stats profiles) nSamples theta 0.05
+                        maxP = VU.length theta
+                        ciStr = intercalate ","
+                              $ Prelude.map (\(CI _ l h) -> show l <> "," <> show h) ciVals
+                              ++ Prelude.replicate (2 * (maxP - length ciVals)) ""
+                    pure $ base <> "," <> ciStr
+                  _ -> pure base
       pure . SimpleStr $ intercalate "\n" ("Id,Expression,Fitness" : rows)
 run (DBDist fname ds n) = do
   r <- liftIO $ withBackend fname $ \db -> do
@@ -596,11 +637,52 @@ run (DBCount fname op) = do
   c <- liftIO $ withBackend fname $ \db -> Q.countPattern db (T.pack op)
   pure . SimpleStr $ "e-classes containing " <> op <> ": " <> show c
 
-run (DBPareto fname ds) = do
+run (DBPareto fname ds ci mData) = do
   r <- liftIO $ withBackend fname $ \db -> do
          dsid <- Q.getOrCreateDataset db ds
          Q.paretoBySize db dsid
-  pure . SimpleStr . intercalate "\n" $ ("Id,Fitness,Size" : [show eid <> "," <> show f <> "," <> show s | (eid, f, s) <- r])
+
+  -- Load dataset for CI computation if requested
+  mDataLoaded <- case (ci, mData) of
+    (True, Just dataPath) -> do
+      ((xTr, yTr, _, _), (mYErr, _), _, _) <- liftIO $ loadDataset dataPath True
+      pure $ Just (xTr, yTr, mYErr)
+    _ -> pure Nothing
+
+  -- Load graph for expression extraction if CI requested
+  egForCI <- case (ci, mDataLoaded) of
+    (True, Just _) -> do
+      er <- liftIO $ withBackendKeepOpen fname $ \db -> do
+             dsid <- Q.getOrCreateDataset db ds
+             loadGraphLazy db dsid
+      case er of
+        Left _ -> pure Nothing
+        Right eg' -> do
+          put eg'
+          recalculateBestAllStream myCost
+          flushGraphStore
+          pure $ Just eg'
+    _ -> pure Nothing
+
+  case (ci, mDataLoaded, egForCI) of
+    (True, Just (xTr, yTr, mYErr), Just _) -> do
+      rows <- forM r $ \(eid, f, s) -> do
+                tree <- getBestExpr eid
+                thetas <- getTheta eid
+                let theta = if null thetas then VU.empty else head thetas
+                    dist = Gaussian
+                    nSamples = VU.length yTr
+                    et = compileTree dist xTr yTr mYErr tree
+                    stats = getStatsFromModel dist mYErr xTr yTr tree theta
+                    profiles = getAllProfiles Constrained et theta (_stdErr stats) [] 0.05
+                    ciVals = paramCI (Profile stats profiles) nSamples theta 0.05
+                    maxP = VU.length theta
+                    ciStr = intercalate ","
+                          $ Prelude.map (\(CI _ l h) -> show l <> "," <> show h) ciVals
+                          ++ Prelude.replicate (2 * (maxP - length ciVals)) ""
+                pure $ show eid <> "," <> show f <> "," <> show s <> "," <> ciStr
+      pure . SimpleStr . intercalate "\n" $ ("Id,Fitness,Size" : rows)
+    _ -> pure . SimpleStr . intercalate "\n" $ ("Id,Fitness,Size" : [show eid <> "," <> show f <> "," <> show s | (eid, f, s) <- r])
 
 run (PushFit fname ds) = do
   eg <- get
@@ -751,7 +833,7 @@ run (ImportDB fname eqs ds dist varnames params) = do
               theta       = if params then if dist==MSE then pvs <> ps else pvs else ps
           Just (relabelP0 tree, [VU.fromList theta], Just f)
   content <- liftIO $ Prelude.map (toT . splitOn ",") . lines <$> readFile eqs
-  r <- liftIO $ withBackend fname $ \db -> importEqs db ds (catMaybes (Prelude.map parseOne content))
+  r <- liftIO $ withBackend fname $ \db -> importEqs db (Just ds) (catMaybes (Prelude.map parseOne content))
   pure . SimpleStr $ case r of
     Left err -> "db-import failed: " <> err
     Right s  -> "imported " <> show (isExpressions s) <> " expressions (" <> show (isClasses s) <> " e-classes) into " <> fname

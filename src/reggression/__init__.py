@@ -27,7 +27,7 @@ from ._binding import (
     unsafe_hs_reggression_exit,
 )
 
-VERSION: str = "2.0.0"
+VERSION: str = "2.1.1"
 
 
 _hs_rts_init: bool = False
@@ -190,7 +190,7 @@ class Reggression():
             return self.results[['Id', 'Latex', 'Fitness']]
         return self.results
 
-    def top(self, n=5, filters=[], criteria="fitness", pattern="", isRoot=False, negate=False):
+    def top(self, n=5, filters=[], criteria="fitness", pattern="", isRoot=False, negate=False, ci=False):
         ''' Returns the top-n expressions following a certain criteria.
 
         Parameters
@@ -235,7 +235,8 @@ class Reggression():
 
         filters_str = " ".join([f"with {f}" for f in filters])
         patmatch = f"{'not ' if negate else ''} matching {'root' if isRoot else ''} {pattern}" if len(pattern)>0 else ""
-        query = f"top {n} {filters_str} by {criteria} {patmatch}"
+        cistr = " with ci" if ci else ""
+        query = f"top {n} {filters_str} by {criteria} {patmatch}{cistr}"
         return self.runQuery(query)
 
     def distribution(self, filters=[], limitedAt=25, dsc=True, byFitness=True, atLeast=1000, fromTop=5000):
@@ -314,24 +315,28 @@ class Reggression():
         '''
         query = f"count-pattern {pattern}"
         return self.runQuery(query, df=False)
-    def report(self, n):
+    def report(self, n, ci=False):
         ''' Detailed report of e-class n
 
         Parameters
         ----------
         n : int
             E-class id of the e-class
+        ci : bool, default=False
+            Whether to include profile-likelihood confidence intervals
         '''
-        return self.runQuery(f"report {n}")
-    def optimize(self, n):
+        return self.runQuery(f"report {n} {'with ci' if ci else ''}")
+    def optimize(self, n, ci=False):
         ''' (re)optimize e-class n
 
         Parameters
         ----------
         n : int
             E-class id of the e-class
+        ci : bool, default=False
+            Whether to include profile-likelihood confidence intervals
         '''
-        return self.runQuery(f"optimize {n}")
+        return self.runQuery(f"optimize {n} {'with ci' if ci else ''}")
     def eqsat(self, n=1):
         ''' run n steps of equality saturation
         sequentially for each rule (see https://github.com/folivetti/srtree/blob/main/src/Algorithm/EqSat/Simplify.hs)
@@ -361,15 +366,18 @@ class Reggression():
             Expression to be inserted
         '''
         return self.runQuery(f"insert {expr}")
-    def pareto(self, byFitness=True):
+    def pareto(self, byFitness=True, ci=False):
         ''' Return the Pareto front of accuracy x size
 
         Parameters
         ----------
         byFitness : bool, default=True
             Whether the first objective is fitness or description length
+        ci : bool, default=False
+            Whether to include profile-likelihood confidence intervals
         '''
-        front = self.runQuery(f"pareto {'by fitness' if byFitness else 'by dl'}")
+        cistr = " with ci" if ci else ""
+        front = self.runQuery(f"pareto {'by fitness' if byFitness else 'by dl'}{cistr}")
         col = 'Fitness' if byFitness else 'DL'
 
         return front[front[col] >= front[col].cummax()]
@@ -447,7 +455,7 @@ class Reggression():
             Whether to extract parameter values from the expressions.
         '''
         return self.runQuery(f"db-import {fname} {eqs} {self.dataset_name}", df=False)
-    def dbTop(self, fname, n=5):
+    def dbTop(self, fname, n=5, ci=False):
         ''' Top-n e-classes by fitness queried directly from the SQLite
         database fname (no in-memory pattern enumeration).
 
@@ -457,8 +465,11 @@ class Reggression():
             SQLite database filename
         n : int, default=5
             Number of e-classes
+        ci : bool, default=False
+            Whether to include profile-likelihood confidence intervals
         '''
-        return self.runQuery(f"db-top {fname} {self.dataset_name} {n}")
+        cistr = " with ci" if ci else ""
+        return self.runQuery(f"db-top {fname} {self.dataset_name} {n}{cistr}")
     def dbDistribution(self, fname, maxSize=100):
         ''' Number of evaluated e-classes per model size (size <= maxSize),
         queried from the SQLite database fname.
@@ -483,7 +494,7 @@ class Reggression():
             Operator detail string
         '''
         return self.runQuery(f"db-count {fname} {op}", df=False)
-    def dbPareto(self, fname):
+    def dbPareto(self, fname, ci=False):
         ''' Pareto front over (max fitness, min size) queried from the SQLite
         database fname.
 
@@ -491,8 +502,11 @@ class Reggression():
         ----------
         fname : str
             SQLite database filename
+        ci : bool, default=False
+            Whether to include profile-likelihood confidence intervals
         '''
-        return self.runQuery(f"db-pareto {fname} {self.dataset_name}")
+        cistr = " with ci" if ci else ""
+        return self.runQuery(f"db-pareto {fname} {self.dataset_name}{cistr}")
     def dbStream(self, fname, op, budget=1000):
         ''' PoC: stream the enode table by operator through a SQLite cursor and
         report the total count of matching nodes and the first `budget` matched

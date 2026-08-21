@@ -36,7 +36,6 @@ import qualified Data.Map as Map
 import Data.Map ( Map )
 import qualified Data.IntMap.Strict as IntMap
 import Data.Char ( toLower, toUpper )
-import Debug.Trace
 import Algorithm.EqSat (runEqSat)
 
 import Util
@@ -106,7 +105,7 @@ reportCmd varnames _ _ _ [] = helpCmd ["report"]
 reportCmd varnames dist trainData testData args =
   case readMaybe @Int (head args) of
     Nothing -> pure "The id must be an integer."
-    Just n  -> run (Report n (dist, trainData, testData)) >>= printFun varnames trainData testData dist
+    Just n  -> run (Report n (dist, trainData, testData) False) >>= printFun varnames trainData testData dist
 
 --optimizeCmd :: Distribution -> [DataSet] -> [DataSet] -> [String] -> Repl ()
 optimizeCmd varnames _ _ _ [] = helpCmd ["optimize"]
@@ -114,7 +113,7 @@ optimizeCmd varnames dist trainData testData args =
   case readMaybe @Int (head args) of
     Nothing -> pure "The id must be an integer."
     Just n  -> do let nIters = if length args > 1 then fromMaybe 100 (readMaybe @Int (args !! 1)) else 100
-                  run (Optimize n nIters (dist, trainData, trainData)) >>= printFun varnames trainData testData dist
+                  run (Optimize n nIters (dist, trainData, trainData) False) >>= printFun varnames trainData testData dist
 
 eqSatCmd varnames _ _ _ [] = helpCmd ["eqsat"]
 eqSatCmd varnames dist trainData testData (arg:_) = case readMaybe @Int arg of
@@ -144,13 +143,13 @@ insertCmd varnames dist trainData testData args = do
   case etree of
     Left _     -> pure $ "no parse for " <> unwords args
     Right tree -> do ec <- fromTree myCost tree
-                     (run (Optimize ec 100 (dist, trainData, trainData)) >>= printFun varnames trainData testData dist)
+                     (run (Optimize ec 100 (dist, trainData, trainData) False) >>= printFun varnames trainData testData dist)
 
 --paretoCmd :: [String] -> Repl ()
-paretoCmd varnames []   = run (Pareto ByFitness) >>= printFun varnames [] [] (NLL Gaussian)
+paretoCmd varnames []   = run (Pareto ByFitness False) >>= printFun varnames [] [] (NLL Gaussian)
 paretoCmd varnames args = case (Prelude.map toLower $ unwords args) of
-                    "by fitness" -> (run (Pareto ByFitness ) >>= printFun varnames [] [] (NLL Gaussian))
-                    "by dl"      -> (run (Pareto ByDL) >>= printFun varnames [] [] (NLL Gaussian))
+                    "by fitness" -> (run (Pareto ByFitness False) >>= printFun varnames [] [] (NLL Gaussian))
+                    "by dl"      -> (run (Pareto ByDL False) >>= printFun varnames [] [] (NLL Gaussian))
                     _            -> helpCmd ["pareto"]
 
 --countPatCmd :: [String] -> Repl ()
@@ -207,7 +206,7 @@ dbSetFitCmd varnames _ = helpCmd ["db-set-fit"]
 
 dbTopCmd varnames (fname:ds:n:_) = case readMaybe @Int n of
                                     Nothing -> pure "The n must be an integer."
-                                    Just k  -> run (DBTop fname ds k varnames) >>= printFun varnames [] [] (NLL Gaussian)
+                                    Just k  -> run (DBTop fname ds k varnames False Nothing) >>= printFun varnames [] [] (NLL Gaussian)
 dbTopCmd varnames _ = helpCmd ["db-top"]
 
 dbDistCmd varnames (fname:ds:n:_) = case readMaybe @Int n of
@@ -218,7 +217,7 @@ dbDistCmd varnames _ = helpCmd ["db-distribution"]
 dbCountCmd varnames (fname:op:_) = run (DBCount fname op) >>= printFun varnames [] [] (NLL Gaussian)
 dbCountCmd varnames _ = helpCmd ["db-count"]
 
-dbParetoCmd varnames (fname:ds:_) = run (DBPareto fname ds) >>= printFun varnames [] [] (NLL Gaussian)
+dbParetoCmd varnames (fname:ds:_) = run (DBPareto fname ds False Nothing) >>= printFun varnames [] [] (NLL Gaussian)
 dbParetoCmd varnames _ = helpCmd ["db-pareto"]
 
 dbStreamCmd varnames (fname:op:n:_) = case readMaybe @Int n of

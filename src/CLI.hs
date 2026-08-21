@@ -36,7 +36,6 @@ import qualified Data.Map as Map
 import Data.Map ( Map )
 import qualified Data.IntMap.Strict as IntMap
 import Data.Char ( toLower, toUpper )
-import Debug.Trace
 import Algorithm.EqSat (runEqSat)
 
 import System.Console.Repline hiding (Repl)
@@ -155,7 +154,7 @@ reportCmd _ _ _ [] = helpCmd ["report"]
 reportCmd dist trainData testData args =
   case readMaybe @Int (head args) of
     Nothing -> liftIO.putStrLn $ "The id must be an integer."
-    Just n  -> egraph $ run (Report n (dist, trainData, testData)) >>= printFun trainData testData dist 
+    Just n  -> egraph $ run (Report n (dist, trainData, testData) False) >>= printFun trainData testData dist 
 
 optimizeCmd :: Loss -> [DataSet] -> [DataSet] -> [String] -> Repl ()
 optimizeCmd _ _ _ [] = helpCmd ["optimize"]
@@ -163,7 +162,7 @@ optimizeCmd dist trainData testData args =
   case readMaybe @Int (head args) of
     Nothing -> liftIO.putStrLn $ "The id must be an integer."
     Just n  -> do let nIters = if length args > 1 then fromMaybe 100 (readMaybe @Int (args !! 1)) else 100
-                  egraph $ run (Optimize n nIters (dist, trainData, trainData)) >>= printFun trainData testData dist
+                  egraph $ run (Optimize n nIters (dist, trainData, trainData) False) >>= printFun trainData testData dist
  
 eqSatCmd :: Loss -> [DataSet] -> [DataSet] -> [String] -> Repl ()
 eqSatCmd _ _ _ [] = helpCmd ["eqsat"]
@@ -191,13 +190,13 @@ insertCmd dist trainData testData args = do
   case etree of
     Left _     -> liftIO.putStrLn $ "no parse for " <> unwords args
     Right tree -> do ec <- egraph $ fromTree myCost tree
-                     egraph $ run (Optimize ec 100 (dist, trainData, trainData)) >>= printFun trainData testData dist 
+                     egraph $ run (Optimize ec 100 (dist, trainData, trainData) False) >>= printFun trainData testData dist
 
 paretoCmd :: [String] -> Repl ()
-paretoCmd []   = egraph $ run (Pareto ByFitness) >>= printFun [] [] (NLL Gaussian)
+paretoCmd []   = egraph $ run (Pareto ByFitness False) >>= printFun [] [] (NLL Gaussian)
 paretoCmd args = case (Prelude.map toLower $ unwords args) of
-                    "by fitness" -> egraph $ run (Pareto ByFitness ) >>= printFun [] [] (NLL Gaussian) 
-                    "by dl"      -> egraph $ run (Pareto ByDL) >>= printFun [] [] (NLL Gaussian) 
+                    "by fitness" -> egraph $ run (Pareto ByFitness False) >>= printFun [] [] (NLL Gaussian) 
+                    "by dl"      -> egraph $ run (Pareto ByDL False) >>= printFun [] [] (NLL Gaussian) 
                     _            -> helpCmd ["pareto"]
 
 countPatCmd :: [String] -> Repl ()

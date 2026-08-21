@@ -36,7 +36,6 @@ import qualified Data.Map as Map
 import Data.Map ( Map )
 import qualified Data.IntMap.Strict as IntMap
 import Data.Char ( toLower, toUpper )
-import Debug.Trace
 import Algorithm.EqSat (runEqSat)
 
 import Util
