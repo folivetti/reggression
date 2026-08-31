@@ -604,8 +604,12 @@ run (DBTop fname ds n varnames ci mData) = do
     (_, Left err) -> pure . SimpleStr $ "db-top failed: " <> err
     (top, Right eg) -> do
       put eg
-      recalculateBestAllStream myCost
-      flushGraphStore
+      -- Skip recalculateBestAllStream: pages written by a prior dbEqSat or
+      -- import already carry correct _cost/_best in the blob.  The full O(N)
+      -- fixpoint was the primary OOM vector on large graphs (N classes → N
+      -- SQL queries + O(N) IntMap + O(N) IntSet).  getBestExpr reads _best
+      -- directly from the page blobs via cpsLookup, so it does not need the
+      -- resident map or the cost fixpoint.
       rows <- forM top $ \(eid, fit) -> do
                 t <- showExpr <$> getBestExpr eid
                 let base = intercalate "," [show eid, t, show fit]
@@ -659,8 +663,8 @@ run (DBPareto fname ds ci mData) = do
         Left _ -> pure Nothing
         Right eg' -> do
           put eg'
-          recalculateBestAllStream myCost
-          flushGraphStore
+          -- Same as DBTop: skip recalculateBestAllStream; pages already
+          -- carry correct _cost/_best from a prior eqsat or import.
           pure $ Just eg'
     _ -> pure Nothing
 
