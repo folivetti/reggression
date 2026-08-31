@@ -59,10 +59,12 @@ import Database.SQLite3 ( Database, open, close )
 import Database.PostgreSQL.LibPQ ( Connection, connectdb, finish )
 import Algorithm.EqSat.Storage.SQLite ( saveGraph, loadGraphLazy, pushFit, refreshFitness, flushStore )
 import Algorithm.EqSat.Storage.Postgres ()
-import Algorithm.EqSat.Storage.Backend ( SqlBackend )
+import Algorithm.EqSat.Storage.Backend ( SqlBackend, queryDb, SqlValue(..), sqlToText, sqlToInt )
 import Algorithm.EqSat.Storage.Import (importEqs, ImportSummary(..), recordExpressionIndex)
 import Algorithm.EqSat.Storage.Stream (streamByOpCount, streamMatchNAry)
 import Algorithm.EqSat.Storage.ClassStore (loadFrontierRows)
+import Algorithm.EqSat.Storage.Extract (extractBestFromDB)
+import Algorithm.EqSat.Storage.Types (parseTheta)
 import qualified Algorithm.EqSat.Storage.Query as Q
 
 import Util
@@ -582,16 +584,29 @@ run (LoadDB fname ds) = do
 
 run (DBTop fname ds n varnames ci mData) = do
 
-  -- Render the top-N e-classes out-of-core: install the lazily paged graph
-  -- (bounded memory) and recompute best/cost, then format each top e-class.
-  -- Uses a simple, cycle/budget-safe renderer (Id, Expression, Fitness) so a
-  -- supersaturated graph can never hang or explode the full LaTeX/python/modular
-  -- printing path.
+  -- Render the top-N e-classes out-of-core WITHOUT loading the full graph.
+  -- extractBestFromDB reads page blobs directly from cstore_page (one per
+  -- eclass) and follows _best pointers — O(depth) memory per expression,
+  -- no fitSlim IntMap, no recalculateBestAllStream, no O(N) full-graph pass.
   r <- liftIO $ withBackendKeepOpen fname $ \db -> do
          dsid <- Q.getOrCreateDataset db ds
          top  <- Q.topN db dsid n
-         er   <- loadGraphLazy db dsid
-         pure (top, er)
+         -- For each top eid, extract the expression tree directly from the
+         -- page blobs.  This issues N individual page reads (not a full scan).
+         results <- forM top $ \(eid, fit) -> do
+                      mTree <- extractBestFromDB db eid
+                      pure (eid, fit, mTree)
+         -- For CI, read theta from dataset_fit only for the top N eclasses
+         thetaMap <- if ci && not (null top)
+           then do
+             let eids = map (\(eid,_,_) -> eid) results
+                 inClause = "(" <> T.pack (intercalate "," (map show eids)) <> ")"
+             thRows <- queryDb db
+               ("SELECT eid, theta FROM dataset_fit WHERE dataset_id = ? AND eid IN " <> inClause)
+               [SqlInteger (fromIntegral dsid)]
+             pure [ (sqlToInt e, sqlToText t) | [e, t] <- thRows ]
+           else pure []
+         pure (results, thetaMap)
 
   -- Load dataset for CI computation if requested
   mDataLoaded <- case (ci, mData) of
@@ -601,35 +616,33 @@ run (DBTop fname ds n varnames ci mData) = do
     _ -> pure Nothing
 
   case r of
-    (_, Left err) -> pure . SimpleStr $ "db-top failed: " <> err
-    (top, Right eg) -> do
-      put eg
-      -- Skip recalculateBestAllStream: pages written by a prior dbEqSat or
-      -- import already carry correct _cost/_best in the blob.  The full O(N)
-      -- fixpoint was the primary OOM vector on large graphs (N classes → N
-      -- SQL queries + O(N) IntMap + O(N) IntSet).  getBestExpr reads _best
-      -- directly from the page blobs via cpsLookup, so it does not need the
-      -- resident map or the cost fixpoint.
-      rows <- forM top $ \(eid, fit) -> do
-                t <- showExpr <$> getBestExpr eid
-                let base = intercalate "," [show eid, t, show fit]
-                case (ci, mDataLoaded) of
-                  (True, Just (xTr, yTr, mYErr)) -> do
-                    tree <- getBestExpr eid
-                    thetas <- getTheta eid
-                    let theta = if null thetas then VU.empty else head thetas
-                        dist = Gaussian  -- default distribution for CI
-                        nSamples = VU.length yTr
-                        et = compileTree dist xTr yTr mYErr tree
-                        stats = getStatsFromModel dist mYErr xTr yTr tree theta
-                        profiles = getAllProfiles Constrained et theta (_stdErr stats) [] 0.05
-                        ciVals = paramCI (Profile stats profiles) nSamples theta 0.05
-                        maxP = VU.length theta
-                        ciStr = intercalate ","
-                              $ Prelude.map (\(CI _ l h) -> show l <> "," <> show h) ciVals
-                              ++ Prelude.replicate (2 * (maxP - length ciVals)) ""
-                    pure $ base <> "," <> ciStr
-                  _ -> pure base
+    (results, thetaMap) -> do
+      rows <- forM results $ \(eid, fit, mTree) -> do
+                case mTree of
+                  Nothing -> pure $ show eid <> ",<extraction failed>," <> show fit
+                  Just tree -> do
+                    let t = showExpr tree
+                        base = intercalate "," [show eid, t, show fit]
+                    case (ci, mDataLoaded) of
+                      (True, Just (xTr, yTr, mYErr)) -> do
+                        let thetaText = lookup eid thetaMap
+                            theta = case thetaText of
+                              Nothing -> VU.empty
+                              Just th -> case parseTheta (T.unpack th) of
+                                []    -> VU.empty
+                                (v:_) -> v
+                            dist = Gaussian
+                            nSamples = VU.length yTr
+                            et = compileTree dist xTr yTr mYErr tree
+                            stats = getStatsFromModel dist mYErr xTr yTr tree theta
+                            profiles = getAllProfiles Constrained et theta (_stdErr stats) [] 0.05
+                            ciVals = paramCI (Profile stats profiles) nSamples theta 0.05
+                            maxP = VU.length theta
+                            ciStr = intercalate ","
+                                  $ Prelude.map (\(CI _ l h) -> show l <> "," <> show h) ciVals
+                                  ++ Prelude.replicate (2 * (maxP - length ciVals)) ""
+                        pure $ base <> "," <> ciStr
+                      _ -> pure base
       pure . SimpleStr $ intercalate "\n" ("Id,Expression,Fitness" : rows)
 run (DBDist fname ds n) = do
   r <- liftIO $ withBackend fname $ \db -> do
