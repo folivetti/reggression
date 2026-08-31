@@ -113,7 +113,7 @@ class Reggression():
     >>> egg = PyReggression("data.csv", loadFrom="myData.egraph")
     >>> egg.top(10)
     """
-    def __init__(self, dataset, testData="", loss="MSE", loadFrom="", parseCSV="", parseParams=True, refit=False, simpleOutput=False):
+    def __init__(self, dataset, testData="", loss="MSE", loadFrom="", parseCSV="", parseParams=True, refit=False, simpleOutput=False, dataset_name=""):
         losses = ["MSE", "Gaussian", "Bernoulli", "Poisson"]
         if loss not in losses:
             raise ValueError('loss must be one of ', losses)
@@ -130,7 +130,7 @@ class Reggression():
         if not isinstance(refit, bool):
             raise ValueError('refit must be a boolean')
         self.dataset = dataset
-        self.dataset_name = os.path.splitext(os.path.basename(dataset))[0]
+        self.dataset_name = dataset_name if dataset_name else os.path.splitext(os.path.basename(dataset))[0]
         self.testData = testData
         self.loss = loss
         self.loadFrom = loadFrom
