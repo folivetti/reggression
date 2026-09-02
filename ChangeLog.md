@@ -1,5 +1,14 @@
 # Changelog for reggression
 
+## 2.2.1
+
+- `pattern-map` command: shows what each wildcard variable (v0, v1, …) matched
+  in every occurrence of a pattern, with e-class IDs for each wildcard binding
+- `eclass-terminals` command: lists all unique terminals (variables x*,
+  parameters t*, constants) inside a given e-class
+- Python API: `patternMap(pattern, limit=-1)` and `eclassTerminals(eid)` methods
+- Tutorial 16 demonstrating both new introspection tools
+
 ## 2.2.0
 
 - Split-DB support: `db*` methods accept optional `fitDb` parameter; command strings embed `egraph_path:fit_path` paths

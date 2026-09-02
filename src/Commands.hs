@@ -105,6 +105,8 @@ data Command  = Top Int Filter Criteria PatStr Bool
               | Clean Int
               | GetEClassIds Int
               | GetNEclass Int Int
+              | PatternMap String (Maybe Int)
+              | EClassTerminals Int
 
 type Filter = EClass -> Bool -- pattern?
 type FilterDist = Int -> Bool
@@ -175,6 +177,21 @@ parseModular = do n <- decimal
                   stripSp
                   by'     <- fromMaybe ByFitness . listToMaybe <$> many' parseCriteria
                   pure $ Modular n (getAll . mconcat filters) by'
+
+parsePatternMap = do raw <- B.unpack <$> takeWhile1 (/= '\n')
+                     let (patPart, limitPart) = splitLimitedAt raw
+                     let limit = case reads (strip limitPart) of
+                                   [(n, _)] -> Just (n :: Int)
+                                   _        -> Nothing
+                     pure $ PatternMap (strip patPart) limit
+  where
+    strip = reverse . dropWhile (== ' ') . reverse . dropWhile (== ' ')
+    splitLimitedAt [] = ([], "")
+    splitLimitedAt s@(c:cs)
+      | map toUpper (Prelude.take 10 s) == "LIMITED AT" = ([], drop 10 s)
+      | otherwise = let (p, r) = splitLimitedAt cs in (c : p, r)
+
+parseEClassTerminals = EClassTerminals <$> decimal
 
 parseLeast = stringCI "with at least " >> decimal 
 parseTopDist = stringCI "from top " >> decimal 
@@ -881,6 +898,64 @@ run (ExtractPat eid) = do
   pats <- getAllPatterns (<= 10) eid
   pure . Counts $ Prelude.map (\(p, c) -> (p, (c, 0))) $ Map.toList pats
 
+run (PatternMap patStr mLimit) = do
+  let etree = parsePat $ B.pack patStr
+  case etree of
+    Left _ -> pure . SimpleStr $ "no parse for " <> patStr
+    Right pat -> do
+      let wildcards = collectWildcards pat
+          wcEnum = Map.fromList [(fromEnum c, vname) | (c, vname) <- wildcards]
+      results <- match pat
+      rows <- forM results $ \(_subst, root) ->
+        case root of
+          Left eid -> do
+            eid' <- canonical eid
+            best <- relabelParams <$> getBestExpr eid'
+            let rootExpr = showExpr best
+            wcCols <- forM wildcards $ \(c, vname) -> do
+              let varKey = Right (fromEnum c)
+              case Map.lookup varKey _subst of
+                Just (SVOne (Left weid)) -> do
+                  weid' <- canonical weid
+                  wbest <- relabelParams <$> getBestExpr weid'
+                  pure (vname, showExpr wbest, show weid')
+                _ -> pure (vname, "?", "?")
+            pure (rootExpr, wcCols)
+          _ -> pure ("?", [])
+      let limited = maybe id Prelude.take mLimit rows
+          header = "Match,Expression" <> concat ["," <> vname <> "," <> vname <> "_eid" | (_, vname) <- wildcards]
+          body = [ intercalate "," (show idx : expr : concatMap (\(_, e, eid') -> [e, eid']) wc)
+                 | (idx, (expr, wc)) <- zip [0 :: Int ..] limited]
+      pure . SimpleStr $ intercalate "\n" (header : body)
+
+run (EClassTerminals eid) = do
+  ec <- getEClass eid
+  let nodes = Set.toList (_eNodes ec)
+  terms <- evalStateT (concat <$> mapM collectFromNode nodes) Set.empty
+  let header = "Type,Name"
+      rows = [ intercalate "," [kind, name] | (kind, name) <- sortOn snd terms ]
+  pure . SimpleStr $ if null rows then header else intercalate "\n" (header : rows)
+  where
+    collectFromNode :: ENode -> StateT (Set.HashSet Int) MyEGraph [(String, String)]
+    collectFromNode (EVar ix)   = pure [("Var", 'x' : show ix)]
+    collectFromNode (EParam ix) = pure [("Param", 't' : show ix)]
+    collectFromNode (EConst x)  = pure [("Const", show x)]
+    collectFromNode en = do
+      let children = eChildren en
+      concat <$> mapM collectFromEc children
+
+    collectFromEc :: EClassId -> StateT (Set.HashSet Int) MyEGraph [(String, String)]
+    collectFromEc ecId = do
+      ecId' <- lift $ canonical ecId
+      visited <- get
+      if ecId' `Set.member` visited
+        then pure []
+        else do
+          modify' (Set.insert ecId')
+          ec <- lift $ getEClass ecId'
+          let nodes = Set.toList (_eNodes ec)
+          concat <$> mapM collectFromNode nodes
+
 --run (EqSatStep n dataInfo) = do (forM rewrites $ \r -> runEqSat myCost [r] n) >> refitChanged dataInfo
 --                                pure NoPrint
 run (EqSatStep n dataInfo) = do createDB 
@@ -1043,6 +1118,19 @@ fromLeft (Left x) = x
 fromLeft _        = undefined
 
 addTuple (a, b) (c, d) = (a+c, b+d)
+
+collectWildcards :: Pattern -> [(Char, String)]
+collectWildcards = Map.toAscList . Map.fromList . go
+  where
+    go (VarPat c) = [(c, 'v' : show (fromEnum c - 65))]
+    go (Fixed (Uni _ t)) = go t
+    go (Fixed (Bin _ l r)) = go l ++ go r
+    go (Fixed _) = []
+    go Hole = []
+    go (NAry _ ncs) = concatMap goNChild ncs
+    goNChild (Ch p) = go p
+    goNChild (Rest c) = [(c, 'v' : show (fromEnum c - 65))]
+    goNChild (MapP p _) = go p
 
 getAllTokensFrom :: Map.Map Pattern (Int, Double) -> [EClassId] -> MyEGraph (Map.Map Pattern (Int, Double))
 getAllTokensFrom counts [] = pure $ Map.map (\(v1, v2) -> (v1, v2/fromIntegral v1)) counts

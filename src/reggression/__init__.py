@@ -27,7 +27,7 @@ from ._binding import (
     unsafe_hs_reggression_exit,
 )
 
-VERSION: str = "2.2.0"
+VERSION: str = "2.2.1"
 
 
 _hs_rts_init: bool = False
@@ -396,6 +396,62 @@ class Reggression():
 
         '''
         return self.runQuery(f"distribution-tokens {top}")
+
+    def patternMap(self, pattern, limit=-1):
+        ''' Shows what each wildcard variable matched in pattern expressions.
+
+        For a pattern like "v0 * v1", this returns every match with columns
+        showing the expression each wildcard (v0, v1, ...) resolved to, along
+        with its e-class ID.
+
+        Parameters
+        ----------
+        pattern : str
+            A pattern with wildcards v0, v1, ...
+            E.g., "v0 * v1", "exp(v0) + v1", "(v0 + v1) * v2"
+
+        limit : int, default=-1
+            Max number of matches to return. -1 = all.
+
+        Returns
+        -------
+        pd.DataFrame with columns:
+            Match : int
+                Match index
+            Expression : str
+                The full matched expression at the root
+            v0 : str
+                Expression that v0 matched
+            v0_eid : int
+                E-class ID of v0's match
+            v1 : str, v1_eid : int, ...
+                Same for each additional wildcard
+        '''
+        limit_str = f" limited at {limit}" if limit > 0 else ""
+        query = f"pattern-map {pattern}{limit_str}"
+        return self.runQuery(query)
+
+    def eclassTerminals(self, eid):
+        ''' List all unique terminals (variables, parameters, constants) inside an e-class.
+
+        Parameters
+        ----------
+        eid : int
+            E-class id to inspect.
+
+        Returns
+        -------
+        pd.DataFrame with columns:
+            Type : str
+                One of "Var", "Param", or "Const"
+            Name : str
+                The terminal name, e.g. "x0", "t1", "3.14"
+        '''
+        df = self.runQuery(f"eclass-terminals {eid}")
+        if "Name" in df.columns:
+            df["Name"] = df["Name"].astype(str)
+        return df
+
     def save(self, fname):
         ''' Save the e-graph file
 

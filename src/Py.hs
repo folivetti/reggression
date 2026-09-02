@@ -173,6 +173,16 @@ distTokensCmd varnames (arg:_) = case readMaybe arg of
                           Just n -> run (DistTokens n) >>= printFun varnames [] [] (NLL Gaussian)
                           Nothing -> helpCmd ["distribution-tokens"]
 
+patternMapCmd varnames [] = helpCmd ["pattern-map"]
+patternMapCmd varnames args = do
+  let cmd = parseCmd parsePatternMap (B.pack $ unwords args)
+  runIfRight varnames cmd
+
+eclassTerminalsCmd varnames [] = helpCmd ["eclass-terminals"]
+eclassTerminalsCmd varnames (arg:_) = case readMaybe @Int arg of
+    Nothing -> pure "The id must be an integer."
+    Just n  -> run (EClassTerminals n) >>= printFun varnames [] [] (NLL Gaussian)
+
 extractPatCmd varnames args = case readMaybe @Int (head args) of
     Nothing -> pure "The id must be an integer."
     Just n  -> run (ExtractPat n) >>= printFun varnames [] [] (NLL Gaussian)
@@ -238,7 +248,7 @@ dbPushFitCmd varnames _ = helpCmd ["db-push-fit"]
 dbRefreshFitCmd varnames (fname:ds:_) = let (f, fp) = splitColon fname in run (RefreshFit f fp ds) >>= printFun varnames [] [] (NLL Gaussian)
 dbRefreshFitCmd varnames _ = helpCmd ["db-refresh-fitness"]
 
-commands = ["help", "top", "report", "optimize", "eqsat", "getNExprs", "subtrees", "insert", "count-pattern", "distribution", "modularity", "pareto", "save", "load", "import", "extract-pattern", "distribution-tokens", "getNEclasses", "persist", "db-load", "db-import", "db-eqsat", "db-eqsat-frontier", "db-insert", "db-set-fit", "db-top", "db-distribution", "db-count", "db-pareto", "db-stream", "db-push-fit", "db-refresh-fitness"]
+commands = ["help", "top", "report", "optimize", "eqsat", "getNExprs", "subtrees", "insert", "count-pattern", "distribution", "modularity", "pareto", "save", "load", "import", "extract-pattern", "distribution-tokens", "getNEclasses", "persist", "db-load", "db-import", "db-eqsat", "db-eqsat-frontier", "db-insert", "db-set-fit", "db-top", "db-distribution", "db-count", "db-pareto", "db-stream", "db-push-fit", "db-refresh-fitness", "pattern-map", "eclass-terminals"]
 
 topHlp = "top N [FILTER...] [CRITERIA] [[not] matching [root] PATTERN] \n \
          \ \n \
@@ -328,8 +338,10 @@ hlpMap = Map.fromList $ Prelude.zip commands
                             , "db-count FILE OP: number of e-classes containing an e-node with operator OP (e.g. EAdd, EMul, LogAbs) from the SQLite database FILE."
                             , "db-pareto FILE: Pareto front over (fitness, size) from the SQLite database FILE."
                             , "db-push-fit FILE: write the current e-graph's fitness/DL metrics into the @fit@ table of the SQLite database FILE (the graph structure is left intact)."
-                            , "db-refresh-fitness FILE: overwrite the in-memory fitness values with those stored in the @fit@ table of the SQLite database FILE (per e-class, by canonical id)."
-                            ]
+                             , "db-refresh-fitness FILE: overwrite the in-memory fitness values with those stored in the @fit@ table of the SQLite database FILE (per e-class, by canonical id)."
+                             , "pattern-map PATTERN [limited at N]: show what each wildcard variable (v0, v1, ...) matched in every occurrence of PATTERN. Returns columns: Match, Expression, v0, v0_eid, v1, v1_eid, ..."
+                             , "eclass-terminals N: list all unique terminals (variables x*, parameters t*, constants) inside e-class N."
+                             ]
 
 -- Evaluation
 --cmd :: Map String ([String] -> Repl ()) -> String -> Repl ()
@@ -395,6 +407,8 @@ reggression myCmd dataset testData loss' loadFrom dumpTo parseCSV' parseParams c
              , dbStreamCmd varnames
              , dbPushFitCmd varnames
              , dbRefreshFitCmd varnames
+             , patternMapCmd varnames
+             , eclassTerminalsCmd varnames
              ]
       cmdMap = Map.fromList $ Prelude.zip commands funs
 
