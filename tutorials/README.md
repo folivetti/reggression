@@ -34,6 +34,27 @@ Run each script from this `tutorials/` directory (some reference the
   operation streams through a bounded page cache (incremental peak RSS ~0 MB,
   independent of the half-million class count). No in-memory `eqsat` is run first. (No in-memory eqsat comparison at this scale.)
 
+## eggp integration and DB mode
+- `11_eggp_db.py` — **DB-backed eggp loop**: `dbInsert`, `dbSetFit`,
+  `dbEqSatFrontier`, and resume from a persisted database. Shows the
+  out-of-core search pattern: insert → setFit → frontier eqsat → query.
+- `12_db_ingest.py` — **srtree-db CLI workflow**: ingest expressions and fit
+  them to a dataset using the `srtree-db` CLI (`ingest` + `fitdata`).
+
+## Profile-likelihood confidence intervals
+- `13_profile_ci.py` — **profile-likelihood CIs**: query top expressions with
+  confidence interval columns for each fitted parameter.
+
+## Loading and querying pre-existing databases
+- `14_load_existing_db.py` — **load and resume**: load a persisted DB, query
+  it, insert new expressions, re-saturate, and persist back.
+
+## Split-DB architecture
+- `15_split_db_refit_status.py` — **split-DB refit and status**: the egraph is
+  dataset-agnostic; fitness lives in per-dataset fit DBs. Shows refit (clear
+  and re-fit with different parameters), status queries, and multiple datasets
+  sharing one egraph.
+
 See also the Haskell equivalents `egraph-inmemory.hs`, `egraph-db.hs` and
 `egraph-db-stream.hs` in this folder, and the design note in
 `srtree-db/README.md`.

@@ -18,3 +18,4 @@ test/test_modularity.py
 test/test_pyreggression.py
 test/test_pyreggression_db.py
 test/test_pyreggression_eqs.py
+test/test_split_db.py

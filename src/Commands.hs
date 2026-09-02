@@ -85,19 +85,19 @@ data Command  = Top Int Filter Criteria PatStr Bool
               | ExtractPat EClassId
               | Save String
               | Load String
-              | Persist String String
-              | LoadDB String String
-              | DBTop String String Int [String] Bool (Maybe String)
-              | DBDist String String Int
-              | DBCount String String
-                | DBPareto String String Bool (Maybe String)
-                | PushFit String String
-                | RefreshFit String String
-                | DBEqSat String String Int String
-                | DBEqSatFrontier String String Int String
-                | DBInsert String String String
-                | DBSetFit String String Int Double
-                | DBStream String String Int
+              | Persist String String String
+              | LoadDB String String String
+              | DBTop String String String Int [String] Bool (Maybe String)
+              | DBDist String String String Int
+              | DBCount String String String
+                | DBPareto String String String Bool (Maybe String)
+                | PushFit String String String
+                | RefreshFit String String String
+                | DBEqSat String String String Int String
+                | DBEqSatFrontier String String String Int String
+                | DBInsert String String String String
+                | DBSetFit String String String Int Double
+                | DBStream String String String Int
                | ImportDB String String String Loss String Bool
                | Import String Loss String Bool
               | EqSatStep Int ArgOpt
@@ -183,18 +183,28 @@ parseTopDist = stringCI "from top " >> decimal
 -- filename must not contain whitespace
 parseFname = takeWhile1 (\c -> c /= ' ' && c /= '\n')
 
+-- | Parse a possibly colon-separated "egraph_path:fit_path" pair.
+-- If there is no colon, both paths are set to the same value (backward compat).
+parseSplitFname :: Parser (String, String)
+parseSplitFname = do
+  raw <- B.unpack <$> parseFname
+  case break (== ':') raw of
+    (path, ':':fitPath) -> do
+      pure (path, fitPath)
+    _                   -> pure (raw, raw)
+
 parsePersist = string "persist " >>= \_ -> do
-  fname <- B.unpack <$> parseFname
+  (fname, fitPath) <- parseSplitFname
   stripSp
   ds <- B.unpack <$> parseFname
-  pure (Persist fname ds)
+  pure (Persist fname fitPath ds)
 parseLoadDB = string "db-load " >>= \_ -> do
-  fname <- B.unpack <$> parseFname
+  (fname, fitPath) <- parseSplitFname
   stripSp
   ds <- B.unpack <$> parseFname
-  pure (LoadDB fname ds)
+  pure (LoadDB fname fitPath ds)
 parseDBTop   = string "db-top " >>= \_ -> do
-  fname <- B.unpack <$> parseFname
+  (fname, fitPath) <- parseSplitFname
   stripSp
   ds <- B.unpack <$> parseFname
   stripSp
@@ -205,21 +215,21 @@ parseDBTop   = string "db-top " >>= \_ -> do
            then do stripSp
                    optional (string "data" >> stripSp >> fmap B.unpack parseFname)
            else pure Nothing
-  pure (DBTop fname ds n ["x"] ci mData)
+  pure (DBTop fname fitPath ds n ["x"] ci mData)
 parseDBDist  = string "db-distribution " >>= \_ -> do
-  fname <- B.unpack <$> parseFname
+  (fname, fitPath) <- parseSplitFname
   stripSp
   ds <- B.unpack <$> parseFname
   stripSp
   n <- decimal
-  pure (DBDist fname ds n)
+  pure (DBDist fname fitPath ds n)
 parseDBCount = string "db-count " >>= \_ -> do
-  fname <- B.unpack <$> parseFname
+  (fname, fitPath) <- parseSplitFname
   stripSp
   op <- B.unpack <$> parseFname
-  pure (DBCount fname op)
+  pure (DBCount fname fitPath op)
 parseDBPareto = string "db-pareto " >>= \_ -> do
-  fname <- B.unpack <$> parseFname
+  (fname, fitPath) <- parseSplitFname
   stripSp
   ds <- B.unpack <$> parseFname
   stripSp
@@ -228,51 +238,51 @@ parseDBPareto = string "db-pareto " >>= \_ -> do
            then do stripSp
                    optional (string "data" >> stripSp >> fmap B.unpack parseFname)
            else pure Nothing
-  pure (DBPareto fname ds ci mData)
+  pure (DBPareto fname fitPath ds ci mData)
 parsePushFit = string "db-push-fit " >>= \_ -> do
-  fname <- B.unpack <$> parseFname
+  (fname, fitPath) <- parseSplitFname
   stripSp
   ds <- B.unpack <$> parseFname
-  pure (PushFit fname ds)
+  pure (PushFit fname fitPath ds)
 parseRefreshFit = string "db-refresh-fitness " >>= \_ -> do
-  fname <- B.unpack <$> parseFname
+  (fname, fitPath) <- parseSplitFname
   stripSp
   ds <- B.unpack <$> parseFname
-  pure (RefreshFit fname ds)
+  pure (RefreshFit fname fitPath ds)
 parseDBEqSat = string "db-eqsat " >>= \_ -> do
-  fname <- B.unpack <$> parseFname
+  (fname, fitPath) <- parseSplitFname
   stripSp
   ds <- B.unpack <$> parseFname
   stripSp
   n <- decimal
   stripSp
   rs <- option "" (B.unpack <$> parseFname)
-  pure (DBEqSat fname ds n rs)
+  pure (DBEqSat fname fitPath ds n rs)
 parseDBEqSatFrontier = string "db-eqsat-frontier " >>= \_ -> do
-  fname <- B.unpack <$> parseFname
+  (fname, fitPath) <- parseSplitFname
   stripSp
   ds <- B.unpack <$> parseFname
   stripSp
   n <- decimal
   stripSp
   rs <- option "" (B.unpack <$> parseFname)
-  pure (DBEqSatFrontier fname ds n rs)
+  pure (DBEqSatFrontier fname fitPath ds n rs)
 parseDBInsert = string "db-insert " >>= \_ -> do
-  fname <- B.unpack <$> parseFname
+  (fname, fitPath) <- parseSplitFname
   stripSp
   ds <- B.unpack <$> parseFname
   stripSp
   expr <- B.unpack . B.pack <$> manyTill anyChar endOfInput
-  pure (DBInsert fname ds expr)
+  pure (DBInsert fname fitPath ds expr)
 parseDBSetFit = string "db-set-fit " >>= \_ -> do
-  fname <- B.unpack <$> parseFname
+  (fname, fitPath) <- parseSplitFname
   stripSp
   ds <- B.unpack <$> parseFname
   stripSp
   eid <- decimal
   stripSp
   fit <- double
-  pure (DBSetFit fname ds eid fit)
+  pure (DBSetFit fname fitPath ds eid fit)
 parseCriteriaDL = (stringCI "by count" >> pure ByCount)
               <|> (stringCI "by fitness" >> pure ByAvgFit)
 
@@ -548,7 +558,7 @@ run (Load fname) = do
 
 -- * SQLite-backed commands
 
-run (Persist fname ds) = do
+run (Persist fname fitPath ds) = do
   eg <- get
   r  <- liftIO $ withBackend fname $ \db -> do
          dsid <- Q.getOrCreateDataset db ds
@@ -557,7 +567,7 @@ run (Persist fname ds) = do
     Left err -> "persist failed: " <> err
     Right () -> "e-graph persisted to " <> fname
 
-run (LoadDB fname ds) = do
+run (LoadDB fname fitPath ds) = do
   -- NB: keep the DB connection alive.  loadGraphLazy builds a paged
   -- e-graph whose 'EClassPageStore' references this very connection, so closing
   -- it (as 'withBackend' does) would leave the graph pointing at a dead
@@ -582,31 +592,30 @@ run (LoadDB fname ds) = do
       flushGraphStore
       pure (SimpleStr ("e-graph loaded from " <> fname))
 
-run (DBTop fname ds n varnames ci mData) = do
+run (DBTop fname fitPath ds n varnames ci mData) = do
 
-  -- Render the top-N e-classes out-of-core WITHOUT loading the full graph.
-  -- extractBestFromDB reads page blobs directly from cstore_page (one per
-  -- eclass) and follows _best pointers — O(depth) memory per expression,
-  -- no fitSlim IntMap, no recalculateBestAllStream, no O(N) full-graph pass.
-  r <- liftIO $ withBackendKeepOpen fname $ \db -> do
-         dsid <- Q.getOrCreateDataset db ds
-         top  <- Q.topN db dsid n
-         -- For each top eid, extract the expression tree directly from the
-         -- page blobs.  This issues N individual page reads (not a full scan).
-         results <- forM top $ \(eid, fit) -> do
-                      mTree <- extractBestFromDB db eid
-                      pure (eid, fit, mTree)
-         -- For CI, read theta from dataset_fit only for the top N eclasses
-         thetaMap <- if ci && not (null top)
-           then do
-             let eids = map (\(eid,_,_) -> eid) results
-                 inClause = "(" <> T.pack (intercalate "," (map show eids)) <> ")"
-             thRows <- queryDb db
-               ("SELECT eid, theta FROM dataset_fit WHERE dataset_id = ? AND eid IN " <> inClause)
-               [SqlInteger (fromIntegral dsid)]
-             pure [ (sqlToInt e, sqlToText t) | [e, t] <- thRows ]
-           else pure []
-         pure (results, thetaMap)
+  -- Get dataset ID and top-N from fit DB
+  (dsid, top) <- liftIO $ withBackend fitPath $ \fitDb -> do
+         dsid <- Q.getOrCreateDataset fitDb ds
+         top  <- Q.topN fitDb dsid n
+         pure (dsid, top)
+
+  -- Extract expression trees from egraph DB (needs cstore_page)
+  results <- liftIO $ withBackend fname $ \egDb ->
+    forM top $ \(eid, fit) -> do
+      mTree <- extractBestFromDB egDb eid
+      pure (eid, fit, mTree)
+
+  -- For CI, read theta from fit DB
+  thetaMap <- if ci && not (null top)
+    then liftIO $ withBackend fitPath $ \fitDb -> do
+      let eids = map (\(eid,_,_) -> eid) results
+          inClause = "(" <> T.pack (intercalate "," (map show eids)) <> ")"
+      thRows <- queryDb fitDb
+        ("SELECT eid, theta FROM dataset_fit WHERE dataset_id = ? AND eid IN " <> inClause)
+        [SqlInteger (fromIntegral dsid)]
+      pure [ (sqlToInt e, sqlToText t) | [e, t] <- thRows ]
+    else pure []
 
   -- Load dataset for CI computation if requested
   mDataLoaded <- case (ci, mData) of
@@ -615,47 +624,45 @@ run (DBTop fname ds n varnames ci mData) = do
       pure $ Just (xTr, yTr, mYErr)
     _ -> pure Nothing
 
-  case r of
-    (results, thetaMap) -> do
-      rows <- forM results $ \(eid, fit, mTree) -> do
-                case mTree of
-                  Nothing -> pure $ show eid <> ",<extraction failed>," <> show fit
-                  Just tree -> do
-                    let t = showExpr tree
-                        base = intercalate "," [show eid, t, show fit]
-                    case (ci, mDataLoaded) of
-                      (True, Just (xTr, yTr, mYErr)) -> do
-                        let thetaText = lookup eid thetaMap
-                            theta = case thetaText of
-                              Nothing -> VU.empty
-                              Just th -> case parseTheta (T.unpack th) of
-                                []    -> VU.empty
-                                (v:_) -> v
-                            dist = Gaussian
-                            nSamples = VU.length yTr
-                            et = compileTree dist xTr yTr mYErr tree
-                            stats = getStatsFromModel dist mYErr xTr yTr tree theta
-                            profiles = getAllProfiles Constrained et theta (_stdErr stats) [] 0.05
-                            ciVals = paramCI (Profile stats profiles) nSamples theta 0.05
-                            maxP = VU.length theta
-                            ciStr = intercalate ","
-                                  $ Prelude.map (\(CI _ l h) -> show l <> "," <> show h) ciVals
-                                  ++ Prelude.replicate (2 * (maxP - length ciVals)) ""
-                        pure $ base <> "," <> ciStr
-                      _ -> pure base
-      pure . SimpleStr $ intercalate "\n" ("Id,Expression,Fitness" : rows)
-run (DBDist fname ds n) = do
-  r <- liftIO $ withBackend fname $ \db -> do
+  rows <- forM results $ \(eid, fit, mTree) ->
+    case mTree of
+      Nothing -> pure $ show eid <> ",<extraction failed>," <> show fit
+      Just tree -> do
+        let t = showExpr tree
+            base = intercalate "," [show eid, t, show fit]
+        case (ci, mDataLoaded) of
+          (True, Just (xTr, yTr, mYErr)) -> do
+            let thetaText = lookup eid thetaMap
+                theta = case thetaText of
+                  Nothing -> VU.empty
+                  Just th -> case parseTheta (T.unpack th) of
+                    []    -> VU.empty
+                    (v:_) -> v
+                dist = Gaussian
+                nSamples = VU.length yTr
+                et = compileTree dist xTr yTr mYErr tree
+                stats = getStatsFromModel dist mYErr xTr yTr tree theta
+                profiles = getAllProfiles Constrained et theta (_stdErr stats) [] 0.05
+                ciVals = paramCI (Profile stats profiles) nSamples theta 0.05
+                maxP = VU.length theta
+                ciStr = intercalate ","
+                      $ Prelude.map (\(CI _ l h) -> show l <> "," <> show h) ciVals
+                      ++ Prelude.replicate (2 * (maxP - length ciVals)) ""
+            pure $ base <> "," <> ciStr
+          _ -> pure base
+  pure . SimpleStr $ intercalate "\n" ("Id,Expression,Fitness" : rows)
+run (DBDist fname fitPath ds n) = do
+  r <- liftIO $ withBackend fitPath $ \db -> do
          dsid <- Q.getOrCreateDataset db ds
          Q.distributionCounts db dsid n
   pure . SimpleStr . intercalate "\n" $ ("Size,Count" : [show s <> "," <> show c | (s, c) <- r])
 
-run (DBCount fname op) = do
+run (DBCount fname fitPath op) = do
   c <- liftIO $ withBackend fname $ \db -> Q.countPattern db (T.pack op)
   pure . SimpleStr $ "e-classes containing " <> op <> ": " <> show c
 
-run (DBPareto fname ds ci mData) = do
-  r <- liftIO $ withBackend fname $ \db -> do
+run (DBPareto fname fitPath ds ci mData) = do
+  r <- liftIO $ withBackend fitPath $ \db -> do
          dsid <- Q.getOrCreateDataset db ds
          Q.paretoBySize db dsid
 
@@ -701,14 +708,14 @@ run (DBPareto fname ds ci mData) = do
       pure . SimpleStr . intercalate "\n" $ ("Id,Fitness,Size" : rows)
     _ -> pure . SimpleStr . intercalate "\n" $ ("Id,Fitness,Size" : [show eid <> "," <> show f <> "," <> show s | (eid, f, s) <- r])
 
-run (PushFit fname ds) = do
+run (PushFit fname fitPath ds) = do
   eg <- get
   liftIO $ withBackend fname $ \db -> do
          dsid <- Q.getOrCreateDataset db ds
          pushFit db dsid eg
   pure . SimpleStr $ "dataset_fit table written to " <> fname
 
-run (RefreshFit fname ds) = do
+run (RefreshFit fname fitPath ds) = do
   eg <- get
   r  <- liftIO $ withBackend fname $ \db -> do
          dsid <- Q.getOrCreateDataset db ds
@@ -723,7 +730,7 @@ run (RefreshFit fname ds) = do
 -- The e-graph stays paged: only the structural indexes are resident, every
 -- e-class body is streamed through the store, and class bodies never all live in
 -- memory at once. The rewritten graph is written back with 'saveGraph'.
-run (DBEqSat fname ds iters rs) = do
+run (DBEqSat fname fitPath ds iters rs) = do
   let rules = case rs of
                "params" -> rewritesParams
                _        -> rewrites
@@ -755,7 +762,7 @@ run (DBEqSat fname ds iters rs) = do
 -- frontier, so unchanged parts of the graph are not re-worked. Clears the
 -- frontier afterwards. O(1) memory, paged. The pure in-memory eggp loop and a
 -- full 'dbEqSat' are unaffected.
-run (DBEqSatFrontier fname ds iters rs) = do
+run (DBEqSatFrontier fname fitPath ds iters rs) = do
   let rules = case rs of
                "params" -> rewritesParams
                _        -> rewrites
@@ -789,23 +796,24 @@ run (DBEqSatFrontier fname ds iters rs) = do
 -- with the in-memory 'insert') so the eggp loop can track / evaluate it, and the
 -- expression is recorded in @expression_index@ (item: "was this seen?").
 -- O(subgraph) work, O(1) memory.
-run (DBInsert fname ds expr) = do
+run (DBInsert fname fitPath ds expr) = do
   let etree = parseSR TIR "" False (B.pack expr)
   r <- liftIO $ case etree of
     Left _     -> pure (Left "no parse")
-    Right tree -> withBackend fname $ \db -> do
-      dsid <- Q.getOrCreateDataset db ds
-      er <- loadGraphLazy db dsid
-      case er of
-        Left err -> pure (Left err)
-        Right eg -> case _classStore eg of
-          Nothing -> pure (Left "db-insert requires a paged graph")
-          Just _  -> do
-            (eid, eg') <- runStateT (fromTree myCost tree) eg
-            flushStore eg'
-            recordExpressionIndex db dsid eid
-            saveGraph db dsid eg'
-            pure (Right eid)
+    Right tree -> do
+      dsid <- withBackend fitPath $ \fitDb -> Q.getOrCreateDataset fitDb ds
+      withBackend fname $ \db -> do
+        er <- loadGraphLazy db dsid
+        case er of
+          Left err -> pure (Left err)
+          Right eg -> case _classStore eg of
+            Nothing -> pure (Left "db-insert requires a paged graph")
+            Just _  -> do
+              (eid, eg') <- runStateT (fromTree myCost tree) eg
+              flushStore eg'
+              withBackend fitPath $ \fitDb -> recordExpressionIndex fitDb dsid eid
+              saveGraph db dsid eg'
+              pure (Right eid)
   pure . SimpleStr $ case r of
     Left err  -> "db-insert failed: " <> err
     Right eid -> show eid
@@ -813,8 +821,8 @@ run (DBInsert fname ds expr) = do
 -- | Set the fitness of a single e-class in @dataset_fit@, so a newly-inserted
 -- DB expression (see 'DBInsert') can be ranked by the query layer once the eggp
 -- loop has evaluated it. Writes only that class's row (structure untouched).
-run (DBSetFit fname ds eid fit) =
-  liftIO $ withBackend fname $ \db -> do
+run (DBSetFit fname fitPath ds eid fit) =
+  liftIO $ withBackend fitPath $ \db -> do
     dsid <- Q.getOrCreateDataset db ds
     Q.writeDatasetFit db dsid eid (Just fit) Nothing "" 0
     pure (SimpleStr ("db-set-fit " <> show eid <> " <- " <> show fit))
@@ -826,7 +834,7 @@ run (Import fname dist varnames params) = do
 -- | PoC: stream the @enode@ table by operator through a SQLite cursor and
 -- report the total count and the first @budget@ matched e-classes. Used to
 -- measure that streaming matching is O(1) memory vs the in-RAM pattern trie.
-run (DBStream fname op budget) = do
+run (DBStream fname fitPath op budget) = do
   r <- liftIO $ do
     db <- open (T.pack fname)
     n  <- streamByOpCount db (T.pack op)
@@ -916,6 +924,18 @@ withBackendKeepOpen spec k
       bracketOnError (connectdb (B.pack spec)) finish (\c -> k c)
   | otherwise =
       bracketOnError (open (T.pack spec)) close (\d -> k d)
+
+-- | Open two backend connections (egraph and fit) and run two actions, one on
+-- each connection.  When both paths are identical the second connection is
+-- still opened (the caller may use different subsets of each connection).
+withBackendSplit :: String -> String
+                 -> (forall b. SqlBackend b => b -> IO a)
+                 -> (forall b. SqlBackend b => b -> IO a)
+                 -> IO (a, a)
+withBackendSplit egraphSpec fitSpec kEgraph kFit =
+  withBackend egraphSpec $ \dbEgraph ->
+    withBackend fitSpec $ \dbFit ->
+      (,) <$> kEgraph dbEgraph <*> kFit dbFit
 
 importCSV :: Loss -> String -> String -> Bool -> MyEGraph ()
 importCSV dist fname hdr convertParam = cleanDB >> parseEqs >> createDB >> rebuildAllRanges

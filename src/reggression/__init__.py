@@ -27,7 +27,7 @@ from ._binding import (
     unsafe_hs_reggression_exit,
 )
 
-VERSION: str = "2.1.1"
+VERSION: str = "2.2.0"
 
 
 _hs_rts_init: bool = False
@@ -414,7 +414,7 @@ class Reggression():
             Filename
         '''
         return self.runQuery(f"load {fname}", df=False)
-    def persist(self, fname):
+    def persist(self, fname, fitDb=""):
         ''' Save the current e-graph to the SQLite database file fname
         (srtree-db). A later db-top/db-distribution/db-count/db-pareto on the
         same file runs the query directly in SQLite.
@@ -423,18 +423,26 @@ class Reggression():
         ----------
         fname : str
             SQLite database filename
+        fitDb : str, default=""
+            Optional separate fit database filename. If provided, the command
+            string embeds it as `fname:fit_path`. If empty, uses fname for both.
         '''
-        return self.runQuery(f"persist {fname} {self.dataset_name}", df=False)
-    def loadDB(self, fname):
+        dbSpec = f"{fname}:{fitDb}" if fitDb else fname
+        return self.runQuery(f"persist {dbSpec} {self.dataset_name}", df=False)
+    def loadDB(self, fname, fitDb=""):
         ''' Load an e-graph previously persisted with `persist` into memory.
 
         Parameters
         ----------
         fname : str
             SQLite database filename
+        fitDb : str, default=""
+            Optional separate fit database filename. If provided, the command
+            string embeds it as `fname:fit_path`. If empty, uses fname for both.
         '''
-        return self.runQuery(f"db-load {fname} {self.dataset_name}", df=False)
-    def importDB(self, eqs, fname, extractParameters=True):
+        dbSpec = f"{fname}:{fitDb}" if fitDb else fname
+        return self.runQuery(f"db-load {dbSpec} {self.dataset_name}", df=False)
+    def importDB(self, eqs, fname, extractParameters=True, fitDb=""):
         ''' Build an e-graph directly in the SQLite database `fname`,
         out-of-core, by streaming the expressions in the CSV file `eqs` into
         the database (structural, content-addressed, bounded memory) -- no
@@ -453,9 +461,13 @@ class Reggression():
             SQLite database filename to build.
         extractParameters : bool, default=True
             Whether to extract parameter values from the expressions.
+        fitDb : str, default=""
+            Optional separate fit database filename. If provided, the command
+            string embeds it as `fname:fit_path`. If empty, uses fname for both.
         '''
-        return self.runQuery(f"db-import {fname} {eqs} {self.dataset_name}", df=False)
-    def dbTop(self, fname, n=5, ci=False):
+        dbSpec = f"{fname}:{fitDb}" if fitDb else fname
+        return self.runQuery(f"db-import {dbSpec} {eqs} {self.dataset_name}", df=False)
+    def dbTop(self, fname, n=5, ci=False, fitDb=""):
         ''' Top-n e-classes by fitness queried directly from the SQLite
         database fname (no in-memory pattern enumeration).
 
@@ -467,10 +479,14 @@ class Reggression():
             Number of e-classes
         ci : bool, default=False
             Whether to include profile-likelihood confidence intervals
+        fitDb : str, default=""
+            Optional separate fit database filename. If provided, the command
+            string embeds it as `fname:fit_path`. If empty, uses fname for both.
         '''
+        dbSpec = f"{fname}:{fitDb}" if fitDb else fname
         cistr = " with ci" if ci else ""
-        return self.runQuery(f"db-top {fname} {self.dataset_name} {n}{cistr}")
-    def dbDistribution(self, fname, maxSize=100):
+        return self.runQuery(f"db-top {dbSpec} {self.dataset_name} {n}{cistr}")
+    def dbDistribution(self, fname, maxSize=100, fitDb=""):
         ''' Number of evaluated e-classes per model size (size <= maxSize),
         queried from the SQLite database fname.
 
@@ -480,9 +496,13 @@ class Reggression():
             SQLite database filename
         maxSize : int, default=100
             Maximum model size included
+        fitDb : str, default=""
+            Optional separate fit database filename. If provided, the command
+            string embeds it as `fname:fit_path`. If empty, uses fname for both.
         '''
-        return self.runQuery(f"db-distribution {fname} {self.dataset_name} {maxSize}")
-    def dbCount(self, fname, op):
+        dbSpec = f"{fname}:{fitDb}" if fitDb else fname
+        return self.runQuery(f"db-distribution {dbSpec} {self.dataset_name} {maxSize}")
+    def dbCount(self, fname, op, fitDb=""):
         ''' Number of e-classes containing an e-node with operator `op`
         (e.g. "EAdd", "EMul", "LogAbs"), queried from the SQLite database fname.
 
@@ -492,9 +512,13 @@ class Reggression():
             SQLite database filename
         op : str
             Operator detail string
+        fitDb : str, default=""
+            Optional separate fit database filename. If provided, the command
+            string embeds it as `fname:fit_path`. If empty, uses fname for both.
         '''
-        return self.runQuery(f"db-count {fname} {op}", df=False)
-    def dbPareto(self, fname, ci=False):
+        dbSpec = f"{fname}:{fitDb}" if fitDb else fname
+        return self.runQuery(f"db-count {dbSpec} {op}", df=False)
+    def dbPareto(self, fname, ci=False, fitDb=""):
         ''' Pareto front over (max fitness, min size) queried from the SQLite
         database fname.
 
@@ -504,16 +528,21 @@ class Reggression():
             SQLite database filename
         ci : bool, default=False
             Whether to include profile-likelihood confidence intervals
+        fitDb : str, default=""
+            Optional separate fit database filename. If provided, the command
+            string embeds it as `fname:fit_path`. If empty, uses fname for both.
         '''
+        dbSpec = f"{fname}:{fitDb}" if fitDb else fname
         cistr = " with ci" if ci else ""
-        return self.runQuery(f"db-pareto {fname} {self.dataset_name}{cistr}")
-    def dbStream(self, fname, op, budget=1000):
+        return self.runQuery(f"db-pareto {dbSpec} {self.dataset_name}{cistr}")
+    def dbStream(self, fname, op, budget=1000, fitDb=""):
         ''' PoC: stream the enode table by operator through a SQLite cursor and
         report the total count of matching nodes and the first `budget` matched
         e-classes, to validate O(1)-memory streaming matching.
         '''
-        return self.runQuery(f"db-stream {fname} {op} {budget}", df=False)
-    def dbPushFit(self, fname):
+        dbSpec = f"{fname}:{fitDb}" if fitDb else fname
+        return self.runQuery(f"db-stream {dbSpec} {op} {budget}", df=False)
+    def dbPushFit(self, fname, fitDb=""):
         ''' Write the current e-graph's fitness/DL metrics into the @fit@ table
         of the SQLite database fname (the graph structure is left intact).
 
@@ -521,9 +550,13 @@ class Reggression():
         ----------
         fname : str
             SQLite database filename
+        fitDb : str, default=""
+            Optional separate fit database filename. If provided, the command
+            string embeds it as `fname:fit_path`. If empty, uses fname for both.
         '''
-        return self.runQuery(f"db-push-fit {fname} {self.dataset_name}", df=False)
-    def dbRefreshFitness(self, fname):
+        dbSpec = f"{fname}:{fitDb}" if fitDb else fname
+        return self.runQuery(f"db-push-fit {dbSpec} {self.dataset_name}", df=False)
+    def dbRefreshFitness(self, fname, fitDb=""):
         ''' Overwrite the in-memory fitness values with those stored in the
         @fit@ table of the SQLite database fname (per e-class, by canonical
         id).
@@ -532,9 +565,13 @@ class Reggression():
         ----------
         fname : str
             SQLite database filename
+        fitDb : str, default=""
+            Optional separate fit database filename. If provided, the command
+            string embeds it as `fname:fit_path`. If empty, uses fname for both.
         '''
-        return self.runQuery(f"db-refresh-fitness {fname} {self.dataset_name}", df=False)
-    def dbEqSat(self, fname, iterations=10, ruleset="default"):
+        dbSpec = f"{fname}:{fitDb}" if fitDb else fname
+        return self.runQuery(f"db-refresh-fitness {dbSpec} {self.dataset_name}", df=False)
+    def dbEqSat(self, fname, iterations=10, ruleset="default", fitDb=""):
         ''' Run equality saturation directly against a lazily loaded (out-of-core)
         e-graph stored in the SQLite database fname. The e-graph stays paged:
         only the structural indexes are resident and every e-class body is
@@ -549,9 +586,13 @@ class Reggression():
             Maximum number of eqsat iterations
         ruleset : str, default="default"
             Rule set to apply: "default" (rewrites) or "params" (rewritesParams)
+        fitDb : str, default=""
+            Optional separate fit database filename. If provided, the command
+            string embeds it as `fname:fit_path`. If empty, uses fname for both.
         '''
-        return self.runQuery(f"db-eqsat {fname} {self.dataset_name} {iterations} {ruleset}", df=False)
-    def dbEqSatFrontier(self, fname, iterations=10, ruleset="default"):
+        dbSpec = f"{fname}:{fitDb}" if fitDb else fname
+        return self.runQuery(f"db-eqsat {dbSpec} {self.dataset_name} {iterations} {ruleset}", df=False)
+    def dbEqSatFrontier(self, fname, iterations=10, ruleset="default", fitDb=""):
         ''' Re-saturate only the frontier of a lazily loaded (out-of-core) e-graph:
         the e-classes that were created or merged since the last re-saturation pass
         (tracked in the DB's `frontier` table). The matcher's candidate roots are
@@ -559,8 +600,9 @@ class Reggression():
         The frontier is cleared afterwards. O(1) memory (paged). The pure in-memory
         eggp loop and a full `dbEqSat` are unaffected.
         '''
-        return self.runQuery(f"db-eqsat-frontier {fname} {self.dataset_name} {iterations} {ruleset}", df=False)
-    def dbInsert(self, fname, expr):
+        dbSpec = f"{fname}:{fitDb}" if fitDb else fname
+        return self.runQuery(f"db-eqsat-frontier {dbSpec} {self.dataset_name} {iterations} {ruleset}", df=False)
+    def dbInsert(self, fname, expr, fitDb=""):
         ''' Local eggp delta: insert a single expression into the DB-backed
         (out-of-core) e-graph in `fname`. Its subgraph is written through and
         content-addressed (existing subexpressions dedup against the live
@@ -575,19 +617,24 @@ class Reggression():
             SQLite database filename
         expr : str
             Expression to insert
+        fitDb : str, default=""
+            Optional separate fit database filename. If provided, the command
+            string embeds it as `fname:fit_path`. If empty, uses fname for both.
 
         Returns
         -------
         int : the root e-class id
         '''
-        v = self.runQuery(f"db-insert {fname} {self.dataset_name} {expr}", df=False)
+        dbSpec = f"{fname}:{fitDb}" if fitDb else fname
+        v = self.runQuery(f"db-insert {dbSpec} {self.dataset_name} {expr}", df=False)
         return int(str(v).strip())
-    def dbSetFit(self, fname, eid, fitness):
+    def dbSetFit(self, fname, eid, fitness, fitDb=""):
         ''' Record the fitness of a single e-class in `dataset_fit`, so a
         newly-inserted DB expression (from `dbInsert`) can be ranked by the query
         layer once the eggp loop has evaluated it.
         '''
-        return self.runQuery(f"db-set-fit {fname} {self.dataset_name} {eid} {fitness}", df=False)
+        dbSpec = f"{fname}:{fitDb}" if fitDb else fname
+        return self.runQuery(f"db-set-fit {dbSpec} {self.dataset_name} {eid} {fitness}", df=False)
     def importFromCSV(self, fname, extractParameters=True):
         ''' import equations from a CSV file
         IMPORTANT: the extension of the CSV file must match the source

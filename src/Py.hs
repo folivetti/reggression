@@ -177,10 +177,17 @@ extractPatCmd varnames args = case readMaybe @Int (head args) of
     Nothing -> pure "The id must be an integer."
     Just n  -> run (ExtractPat n) >>= printFun varnames [] [] (NLL Gaussian)
 
-persistCmd varnames (fname:ds:_) = run (Persist fname ds) >>= printFun varnames [] [] (NLL Gaussian)
+-- | Split a possibly colon-separated "egraph_path:fit_path" pair.
+-- If there is no colon, both paths are set to the same value (backward compat).
+splitColon :: String -> (String, String)
+splitColon s = case break (== ':') s of
+  (path, ':':fitPath) -> (path, fitPath)
+  _                   -> (s, s)
+
+persistCmd varnames (fname:ds:_) = let (f, fp) = splitColon fname in run (Persist f fp ds) >>= printFun varnames [] [] (NLL Gaussian)
 persistCmd varnames _ = helpCmd ["persist"]
 
-dbLoadCmd varnames (fname:ds:_) = run (LoadDB fname ds) >>= printFun varnames [] [] (NLL Gaussian)
+dbLoadCmd varnames (fname:ds:_) = let (f, fp) = splitColon fname in run (LoadDB f fp ds) >>= printFun varnames [] [] (NLL Gaussian)
 dbLoadCmd varnames _ = helpCmd ["db-load"]
 
 dbImportCmd varnames loss vars (db:eqs:ds:_) = run (ImportDB db eqs ds loss vars True) >>= printFun varnames [] [] loss
@@ -188,47 +195,47 @@ dbImportCmd varnames _ _ _ = helpCmd ["db-import"]
 
 dbEqSatCmd varnames (fname:ds:n:rs:_) = case readMaybe @Int n of
                                         Nothing -> pure "The n must be an integer."
-                                        Just k  -> run (DBEqSat fname ds k rs) >>= printFun varnames [] [] (NLL Gaussian)
+                                        Just k  -> let (f, fp) = splitColon fname in run (DBEqSat f fp ds k rs) >>= printFun varnames [] [] (NLL Gaussian)
 dbEqSatCmd varnames _ = helpCmd ["db-eqsat"]
 
 dbEqSatFrontierCmd varnames (fname:ds:n:rs:_) = case readMaybe @Int n of
                                         Nothing -> pure "The n must be an integer."
-                                        Just k  -> run (DBEqSatFrontier fname ds k rs) >>= printFun varnames [] [] (NLL Gaussian)
+                                        Just k  -> let (f, fp) = splitColon fname in run (DBEqSatFrontier f fp ds k rs) >>= printFun varnames [] [] (NLL Gaussian)
 dbEqSatFrontierCmd varnames _ = helpCmd ["db-eqsat-frontier"]
 
-dbInsertCmd varnames (fname:ds:args) = run (DBInsert fname ds (unwords args)) >>= printFun varnames [] [] (NLL Gaussian)
+dbInsertCmd varnames (fname:ds:args) = let (f, fp) = splitColon fname in run (DBInsert f fp ds (unwords args)) >>= printFun varnames [] [] (NLL Gaussian)
 dbInsertCmd varnames _ = helpCmd ["db-insert"]
 
 dbSetFitCmd varnames (fname:ds:eid:fit:_) = case (readMaybe @Int eid, readMaybe @Double fit) of
-    (Just e, Just f) -> run (DBSetFit fname ds e f) >>= printFun varnames [] [] (NLL Gaussian)
+    (Just e, Just f) -> let (fp, fp') = splitColon fname in run (DBSetFit fp fp' ds e f) >>= printFun varnames [] [] (NLL Gaussian)
     _                -> pure "db-set-fit requires EID FITNESS as numbers"
 dbSetFitCmd varnames _ = helpCmd ["db-set-fit"]
 
 dbTopCmd varnames (fname:ds:n:_) = case readMaybe @Int n of
                                     Nothing -> pure "The n must be an integer."
-                                    Just k  -> run (DBTop fname ds k varnames False Nothing) >>= printFun varnames [] [] (NLL Gaussian)
+                                    Just k  -> let (f, fp) = splitColon fname in run (DBTop f fp ds k varnames False Nothing) >>= printFun varnames [] [] (NLL Gaussian)
 dbTopCmd varnames _ = helpCmd ["db-top"]
 
 dbDistCmd varnames (fname:ds:n:_) = case readMaybe @Int n of
                                     Nothing -> pure "The n must be an integer."
-                                    Just k  -> run (DBDist fname ds k) >>= printFun varnames [] [] (NLL Gaussian)
+                                    Just k  -> let (f, fp) = splitColon fname in run (DBDist f fp ds k) >>= printFun varnames [] [] (NLL Gaussian)
 dbDistCmd varnames _ = helpCmd ["db-distribution"]
 
-dbCountCmd varnames (fname:op:_) = run (DBCount fname op) >>= printFun varnames [] [] (NLL Gaussian)
+dbCountCmd varnames (fname:op:_) = let (f, fp) = splitColon fname in run (DBCount f fp op) >>= printFun varnames [] [] (NLL Gaussian)
 dbCountCmd varnames _ = helpCmd ["db-count"]
 
-dbParetoCmd varnames (fname:ds:_) = run (DBPareto fname ds False Nothing) >>= printFun varnames [] [] (NLL Gaussian)
+dbParetoCmd varnames (fname:ds:_) = let (f, fp) = splitColon fname in run (DBPareto f fp ds False Nothing) >>= printFun varnames [] [] (NLL Gaussian)
 dbParetoCmd varnames _ = helpCmd ["db-pareto"]
 
 dbStreamCmd varnames (fname:op:n:_) = case readMaybe @Int n of
                                         Nothing -> pure "The n must be an integer."
-                                        Just k  -> run (DBStream fname op k) >>= printFun varnames [] [] (NLL Gaussian)
+                                        Just k  -> let (f, fp) = splitColon fname in run (DBStream f fp op k) >>= printFun varnames [] [] (NLL Gaussian)
 dbStreamCmd varnames _ = helpCmd ["db-stream"]
 
-dbPushFitCmd varnames (fname:ds:_) = run (PushFit fname ds) >>= printFun varnames [] [] (NLL Gaussian)
+dbPushFitCmd varnames (fname:ds:_) = let (f, fp) = splitColon fname in run (PushFit f fp ds) >>= printFun varnames [] [] (NLL Gaussian)
 dbPushFitCmd varnames _ = helpCmd ["db-push-fit"]
 
-dbRefreshFitCmd varnames (fname:ds:_) = run (RefreshFit fname ds) >>= printFun varnames [] [] (NLL Gaussian)
+dbRefreshFitCmd varnames (fname:ds:_) = let (f, fp) = splitColon fname in run (RefreshFit f fp ds) >>= printFun varnames [] [] (NLL Gaussian)
 dbRefreshFitCmd varnames _ = helpCmd ["db-refresh-fitness"]
 
 commands = ["help", "top", "report", "optimize", "eqsat", "getNExprs", "subtrees", "insert", "count-pattern", "distribution", "modularity", "pareto", "save", "load", "import", "extract-pattern", "distribution-tokens", "getNEclasses", "persist", "db-load", "db-import", "db-eqsat", "db-eqsat-frontier", "db-insert", "db-set-fit", "db-top", "db-distribution", "db-count", "db-pareto", "db-stream", "db-push-fit", "db-refresh-fitness"]
