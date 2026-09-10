@@ -15,15 +15,17 @@ import Data.Monoid (All(..))
 import qualified Data.IntMap.Strict as IntMap
 import qualified Data.IntSet as IntSet
 import Control.Monad.State.Strict
-import Control.Monad ( forM_, filterM, forM )
+import Control.Monad ( forM_, filterM, forM, foldM )
 import Control.Monad.IO.Class ( liftIO )
-import Control.Exception ( bracket, bracketOnError )
+import Control.Exception ( bracket, bracketOnError, evaluate, try, SomeException, catch )
+import Control.DeepSeq (force)
 import Data.Char ( toUpper )
 import qualified Data.Map as Map
 import qualified Data.HashMap.Strict as HM
 import qualified Data.HashSet as Set
 import qualified Data.Vector.Unboxed as VU
 import Data.List ( nub, sortOn, intercalate, isPrefixOf )
+import Data.Ord (Down(..))
 import Data.List.Split ( splitOn )
 import Control.Lens (over)
 
@@ -37,9 +39,13 @@ import Data.SRTree.Print hiding ( printExpr )
 import Text.ParseSR (SRAlgs(..), parseSR, Output(..), showOutput)
 import System.Random
 
+import Statistics.Distribution ( ContDistr(quantile) )
+import Statistics.Distribution.FDistribution ( fDistribution )
+import System.IO.Unsafe (unsafePerformIO)
 import Algorithm.SRTree.Likelihoods
-import Algorithm.SRTree.ConfidenceIntervals (CIType(..), PType(..), paramCI, getAllProfiles, getStatsFromModel, CI(..), BasicStats(..))
-import Algorithm.SRTree.Compile (compileTree)
+import Algorithm.SRTree.ConfidenceIntervals (CIType(..), PType(..), paramCI, getAllProfiles, getStatsFromModel, CI(..), BasicStats(..), getCol, approximateContour, ProfileT(..))
+import Algorithm.SRTree.Compile (compileTree, EvalTree(..))
+import Algorithm.SRTree.Utils (invChol, toRowMajor, fromRowMajor)
 
 import Algorithm.EqSat
 import Algorithm.EqSat.Egraph
@@ -59,12 +65,12 @@ import Database.SQLite3 ( Database, open, close )
 import Database.PostgreSQL.LibPQ ( Connection, connectdb, finish )
 import Algorithm.EqSat.Storage.SQLite ( saveGraph, loadGraphLazy, pushFit, refreshFitness, flushStore )
 import Algorithm.EqSat.Storage.Postgres ()
-import Algorithm.EqSat.Storage.Backend ( SqlBackend, queryDb, SqlValue(..), sqlToText, sqlToInt )
+import Algorithm.EqSat.Storage.Backend ( SqlBackend, queryDb, SqlValue(..), sqlToText, sqlToInt, sqlToMaybeDouble )
 import Algorithm.EqSat.Storage.Import (importEqs, ImportSummary(..), recordExpressionIndex)
 import Algorithm.EqSat.Storage.Stream (streamByOpCount, streamMatchNAry)
 import Algorithm.EqSat.Storage.ClassStore (loadFrontierRows)
-import Algorithm.EqSat.Storage.Extract (extractBestFromDB)
-import Algorithm.EqSat.Storage.Types (parseTheta)
+import Algorithm.EqSat.Storage.Extract (extractBestFromDB, readPage)
+import Algorithm.EqSat.Storage.Types (parseTheta, serializeTheta)
 import qualified Algorithm.EqSat.Storage.Query as Q
 
 import Util
@@ -80,7 +86,7 @@ data Command  = Top Int Filter Criteria PatStr Bool
               | Optimize EClassId Int ArgOpt Bool
               | Insert String ArgOpt
               | Subtrees EClassId
-              | Pareto Criteria Bool
+                | Pareto Criteria Bool
               | CountPat String
               | ExtractPat EClassId
               | Save String
@@ -90,7 +96,8 @@ data Command  = Top Int Filter Criteria PatStr Bool
               | DBTop String String String Int [String] Bool (Maybe String)
               | DBDist String String String Int
               | DBCount String String String
-                | DBPareto String String String Bool (Maybe String)
+                | DBPareto String String String Bool Bool (Maybe String)
+                  -- fname fitPath ds ci byFitness mData
                 | PushFit String String String
                 | RefreshFit String String String
                 | DBEqSat String String String Int String
@@ -98,12 +105,25 @@ data Command  = Top Int Filter Criteria PatStr Bool
                 | DBInsert String String String String
                 | DBSetFit String String String Int Double
                 | DBStream String String String Int
+                | DBReport String String String Int Bool          -- fname fitPath ds eid ci
+                | DBOptimize String String String Int Bool String  -- fname fitPath ds eid ci lossName
+                | DBSubtrees String String String Int             -- fname _fitPath ds eid
+                | DBGetNExprs String String String Int Int        -- fname _fitPath ds n eid
+                | DBGetNEclasses String String String Int Int     -- fname _fitPath ds n eid
+                | DBEClassTerminals String String String Int      -- fname _fitPath ds eid
+                | DBTopPattern String String String Int String Bool Bool (Maybe String)
+                  -- fname fitPath ds n pattern isRoot negate ci
+                | DBDistribution String String String Int   -- fname fitPath ds n (top-N bounded)
+                | DBModularity String String String Int     -- fname fitPath ds n
+                | DBCountPat String String String String Int -- fname fitPath ds pattern n
+                | DBPatternMap String String String String Int -- fname fitPath ds pattern n
+                | DBExtractPat String String String Int     -- fname fitPath ds eid
+                | DBDistTokens String String String Int     -- fname fitPath ds n
+                | DBProfileData String String String Int String  -- fname fitPath ds eid dataPath
                | ImportDB String String String Loss String Bool
                | Import String Loss String Bool
               | EqSatStep Int ArgOpt
               | GetNExprs Int EClassId
-              | Clean Int
-              | GetEClassIds Int
               | GetNEclass Int Int
               | PatternMap String (Maybe Int)
               | EClassTerminals Int
@@ -215,12 +235,12 @@ parsePersist = string "persist " >>= \_ -> do
   stripSp
   ds <- B.unpack <$> parseFname
   pure (Persist fname fitPath ds)
-parseLoadDB = string "db-load " >>= \_ -> do
+parseLoadDB = string "load " >>= \_ -> do
   (fname, fitPath) <- parseSplitFname
   stripSp
   ds <- B.unpack <$> parseFname
   pure (LoadDB fname fitPath ds)
-parseDBTop   = string "db-top " >>= \_ -> do
+parseDBTop   = string "top " >>= \_ -> do
   (fname, fitPath) <- parseSplitFname
   stripSp
   ds <- B.unpack <$> parseFname
@@ -233,19 +253,19 @@ parseDBTop   = string "db-top " >>= \_ -> do
                    optional (string "data" >> stripSp >> fmap B.unpack parseFname)
            else pure Nothing
   pure (DBTop fname fitPath ds n ["x"] ci mData)
-parseDBDist  = string "db-distribution " >>= \_ -> do
+parseDBDist  = string "distribution " >>= \_ -> do
   (fname, fitPath) <- parseSplitFname
   stripSp
   ds <- B.unpack <$> parseFname
   stripSp
   n <- decimal
   pure (DBDist fname fitPath ds n)
-parseDBCount = string "db-count " >>= \_ -> do
+parseDBCount = string "count " >>= \_ -> do
   (fname, fitPath) <- parseSplitFname
   stripSp
   op <- B.unpack <$> parseFname
   pure (DBCount fname fitPath op)
-parseDBPareto = string "db-pareto " >>= \_ -> do
+parseDBPareto = string "pareto " >>= \_ -> do
   (fname, fitPath) <- parseSplitFname
   stripSp
   ds <- B.unpack <$> parseFname
@@ -255,18 +275,20 @@ parseDBPareto = string "db-pareto " >>= \_ -> do
            then do stripSp
                    optional (string "data" >> stripSp >> fmap B.unpack parseFname)
            else pure Nothing
-  pure (DBPareto fname fitPath ds ci mData)
-parsePushFit = string "db-push-fit " >>= \_ -> do
+  stripSp
+  byFitness <- option True (do string "by dl"; pure False)
+  pure (DBPareto fname fitPath ds ci byFitness mData)
+parsePushFit = string "push-fit " >>= \_ -> do
   (fname, fitPath) <- parseSplitFname
   stripSp
   ds <- B.unpack <$> parseFname
   pure (PushFit fname fitPath ds)
-parseRefreshFit = string "db-refresh-fitness " >>= \_ -> do
+parseRefreshFit = string "refresh-fitness " >>= \_ -> do
   (fname, fitPath) <- parseSplitFname
   stripSp
   ds <- B.unpack <$> parseFname
   pure (RefreshFit fname fitPath ds)
-parseDBEqSat = string "db-eqsat " >>= \_ -> do
+parseDBEqSat = string "eqsat " >>= \_ -> do
   (fname, fitPath) <- parseSplitFname
   stripSp
   ds <- B.unpack <$> parseFname
@@ -275,7 +297,7 @@ parseDBEqSat = string "db-eqsat " >>= \_ -> do
   stripSp
   rs <- option "" (B.unpack <$> parseFname)
   pure (DBEqSat fname fitPath ds n rs)
-parseDBEqSatFrontier = string "db-eqsat-frontier " >>= \_ -> do
+parseDBEqSatFrontier = string "eqsat-frontier " >>= \_ -> do
   (fname, fitPath) <- parseSplitFname
   stripSp
   ds <- B.unpack <$> parseFname
@@ -284,14 +306,14 @@ parseDBEqSatFrontier = string "db-eqsat-frontier " >>= \_ -> do
   stripSp
   rs <- option "" (B.unpack <$> parseFname)
   pure (DBEqSatFrontier fname fitPath ds n rs)
-parseDBInsert = string "db-insert " >>= \_ -> do
+parseDBInsert = string "insert " >>= \_ -> do
   (fname, fitPath) <- parseSplitFname
   stripSp
   ds <- B.unpack <$> parseFname
   stripSp
   expr <- B.unpack . B.pack <$> manyTill anyChar endOfInput
   pure (DBInsert fname fitPath ds expr)
-parseDBSetFit = string "db-set-fit " >>= \_ -> do
+parseDBSetFit = string "set-fit " >>= \_ -> do
   (fname, fitPath) <- parseSplitFname
   stripSp
   ds <- B.unpack <$> parseFname
@@ -362,7 +384,8 @@ parseByDL  = do stringCI "by dl"
                 pure ByDL
 
 putEOL :: B.ByteString -> B.ByteString
-putEOL bs | B.last bs == '\n' = bs
+putEOL bs | B.null bs = bs
+          | B.last bs == '\n' = bs
           | otherwise         = B.snoc bs '\n'
 
 -- * Pattern parser (previously exported by Text.ParseSR)
@@ -446,6 +469,26 @@ data PrintResults = MultiExprs [(EClassId, IntMap.IntMap (Int, Int))] | SingleEx
 
 -- running
 run :: Command -> MyEGraph PrintResults
+
+-- | Grid-scan profile for a single parameter.
+-- For each grid point, fixes the parameter and re-optimizes nuisance params.
+-- Returns (taus, thetas_cols, optTh) where thetas_cols is a list of columns.
+-- | Helper: convert a ProfileT to CSV rows
+-- _thetas is stored as rows: each row is a full theta vector at one profile point.
+-- We output one CSV row per profile point p, with columns for each parameter c.
+profileToCSV :: Int -> (Int, ProfileT) -> [String]
+profileToCSV k (paramIdx, prof) =
+  let taus' = _taus prof
+      thetas' = _thetas prof
+      optVal = _opt prof
+      nPts = VU.length taus'
+      nThetas = length thetas'
+  in [ show paramIdx <> ","
+       <> show (taus' VU.! p) <> ","
+       <> intercalate "," [ if p < nThetas then show ((thetas' !! p) VU.! c) else show optVal | c <- [0..k-1] ]
+       <> "," <> show optVal
+     | p <- [0..nPts-1] ]
+
 run (Top n filters criteria NoPat ci) = do
    let getFun = if criteria == ByFitness then getTopFitEClassThat else getTopDLEClassThat
    ids <- getFun n filters
@@ -595,7 +638,7 @@ run (LoadDB fname fitPath ds) = do
   -- replaced/GC'd.
   r <- liftIO $ withBackendKeepOpen fname $ \db -> do
          dsid <- Q.getOrCreateDataset db ds
-         loadGraphLazy db dsid
+         loadGraphLazy db dsid 50000 100000 100000
   case r of
     Left err -> pure . SimpleStr $ "db-load failed: " <> err
     Right eg -> do
@@ -659,8 +702,8 @@ run (DBTop fname fitPath ds n varnames ci mData) = do
                 nSamples = VU.length yTr
                 et = compileTree dist xTr yTr mYErr tree
                 stats = getStatsFromModel dist mYErr xTr yTr tree theta
-                profiles = getAllProfiles Constrained et theta (_stdErr stats) [] 0.05
-                ciVals = paramCI (Profile stats profiles) nSamples theta 0.05
+            profiles <- liftIO $ getAllProfiles Bates et theta (_stdErr stats) [] 0.05
+            let ciVals = paramCI (Profile stats profiles) nSamples theta 0.05
                 maxP = VU.length theta
                 ciStr = intercalate ","
                       $ Prelude.map (\(CI _ l h) -> show l <> "," <> show h) ciVals
@@ -678,10 +721,13 @@ run (DBCount fname fitPath op) = do
   c <- liftIO $ withBackend fname $ \db -> Q.countPattern db (T.pack op)
   pure . SimpleStr $ "e-classes containing " <> op <> ": " <> show c
 
-run (DBPareto fname fitPath ds ci mData) = do
+run (DBPareto fname fitPath ds ci byFitness mData) = do
   r <- liftIO $ withBackend fitPath $ \db -> do
          dsid <- Q.getOrCreateDataset db ds
-         Q.paretoBySize db dsid
+         if byFitness
+           then do pts <- Q.paretoBySize db dsid
+                   pure [(eid, f, fromIntegral s) | (eid, f, s) <- pts]
+           else Q.pareto db dsid
 
   -- Load dataset for CI computation if requested
   mDataLoaded <- case (ci, mData) of
@@ -695,7 +741,7 @@ run (DBPareto fname fitPath ds ci mData) = do
     (True, Just _) -> do
       er <- liftIO $ withBackendKeepOpen fname $ \db -> do
              dsid <- Q.getOrCreateDataset db ds
-             loadGraphLazy db dsid
+             loadGraphLazy db dsid 50000 100000 100000
       case er of
         Left _ -> pure Nothing
         Right eg' -> do
@@ -715,15 +761,18 @@ run (DBPareto fname fitPath ds ci mData) = do
                     nSamples = VU.length yTr
                     et = compileTree dist xTr yTr mYErr tree
                     stats = getStatsFromModel dist mYErr xTr yTr tree theta
-                    profiles = getAllProfiles Constrained et theta (_stdErr stats) [] 0.05
-                    ciVals = paramCI (Profile stats profiles) nSamples theta 0.05
+                profiles <- liftIO $ getAllProfiles Bates et theta (_stdErr stats) [] 0.05
+                let ciVals = paramCI (Profile stats profiles) nSamples theta 0.05
                     maxP = VU.length theta
                     ciStr = intercalate ","
                           $ Prelude.map (\(CI _ l h) -> show l <> "," <> show h) ciVals
                           ++ Prelude.replicate (2 * (maxP - length ciVals)) ""
                 pure $ show eid <> "," <> show f <> "," <> show s <> "," <> ciStr
-      pure . SimpleStr . intercalate "\n" $ ("Id,Fitness,Size" : rows)
-    _ -> pure . SimpleStr . intercalate "\n" $ ("Id,Fitness,Size" : [show eid <> "," <> show f <> "," <> show s | (eid, f, s) <- r])
+      let header = if byFitness then "Id,Fitness,Size" else "Id,Fitness,DL"
+      pure . SimpleStr . intercalate "\n" $ (header : rows)
+    _ -> do
+      let header = if byFitness then "Id,Fitness,Size" else "Id,Fitness,DL"
+      pure . SimpleStr . intercalate "\n" $ (header : [show eid <> "," <> show f <> "," <> show s | (eid, f, s) <- r])
 
 run (PushFit fname fitPath ds) = do
   eg <- get
@@ -753,7 +802,7 @@ run (DBEqSat fname fitPath ds iters rs) = do
                _        -> rewrites
   r <- liftIO $ withBackend fname $ \db -> do
         dsid <- Q.getOrCreateDataset db ds
-        er <- loadGraphLazy db dsid
+        er <- loadGraphLazy db dsid 50000 100000 100000
         case er of
           Left err -> pure (Left err)
           Right eg -> do
@@ -785,7 +834,7 @@ run (DBEqSatFrontier fname fitPath ds iters rs) = do
                _        -> rewrites
   r <- liftIO $ withBackend fname $ \db -> do
         dsid <- Q.getOrCreateDataset db ds
-        er <- loadGraphLazy db dsid
+        er <- loadGraphLazy db dsid 50000 100000 100000
         case er of
           Left err -> pure (Left err)
           Right eg -> case _classStore eg of
@@ -820,7 +869,7 @@ run (DBInsert fname fitPath ds expr) = do
     Right tree -> do
       dsid <- withBackend fitPath $ \fitDb -> Q.getOrCreateDataset fitDb ds
       withBackend fname $ \db -> do
-        er <- loadGraphLazy db dsid
+        er <- loadGraphLazy db dsid 50000 100000 100000
         case er of
           Left err -> pure (Left err)
           Right eg -> case _classStore eg of
@@ -859,6 +908,327 @@ run (DBStream fname fitPath op budget) = do
     close db
     pure (n, ms)
   pure . SimpleStr $ "count=" <> show (fst r) <> " matches=" <> show (length (snd r))
+
+-- | DB-native report: extract the best expression from the DB for a single
+-- e-class, show its canonical ID, expression, and fitness. No in-memory graph.
+run (DBReport fname fitPath ds eid ci) = do
+  -- Get canonical ID
+  canonical <- liftIO $ withBackend fname $ \db -> do
+    rows <- queryDb db "SELECT canonical FROM eclass WHERE eid = ?"
+                      [SqlInteger (fromIntegral eid)]
+    case rows of
+      [[SqlInteger c]] -> pure (fromIntegral c :: Int)
+      _                 -> pure eid
+
+  -- Extract expression from DB
+  mTree <- liftIO $ withBackend fname $ \db -> extractBestFromDB db eid
+
+  -- Get fitness if available
+  (mFit, thetaText) <- liftIO $ withBackend fitPath $ \fitDb -> do
+    dsid <- Q.getOrCreateDataset fitDb ds
+    rows <- queryDb fitDb
+      "SELECT fitness, dl, size, theta FROM dataset_fit WHERE dataset_id = ? AND eid = ?"
+      [SqlInteger (fromIntegral dsid), SqlInteger (fromIntegral eid)]
+    case rows of
+      [[f, d, s, th]] -> pure (Just (sqlToMaybeDouble f, sqlToMaybeDouble d, sqlToInt s), sqlToText th)
+      _                -> pure (Nothing, "")
+
+  let treeStr = maybe "<extraction failed>" showExpr mTree
+      fitStr = case mFit of
+        Nothing -> "not evaluated"
+        Just (f, d, s) -> "fitness=" <> maybe "N/A" show f <> " dl=" <> maybe "N/A" show d <> " size=" <> show s
+
+  -- CI computation
+  ciStr <- case (ci, mTree, mFit) of
+    (True, Just tree, Just (Just _, _, _)) -> do
+      mData <- liftIO $ do
+        datasets <- Prelude.mapM (\d -> loadDataset d True) (words ds)
+        case datasets of
+          (((xTr, yTr, _, _), (mYErr, _), _, _) : _) -> pure $ Just (xTr, yTr, mYErr)
+          _ -> pure Nothing
+      case mData of
+        Nothing -> pure ""
+        Just (xTr, yTr, mYErr) -> do
+          let theta = case parseTheta (T.unpack thetaText) of
+                []    -> VU.empty
+                (v:_) -> v
+              dist = Gaussian
+              nSamples = VU.length yTr
+              et = compileTree dist xTr yTr mYErr tree
+              stats = getStatsFromModel dist mYErr xTr yTr tree theta
+          profiles <- liftIO $ getAllProfiles Bates et theta (_stdErr stats) [] 0.05
+          let ciVals = paramCI (Profile stats profiles) nSamples theta 0.05
+              maxP = VU.length theta
+              ciHdr = intercalate "," [ "ci_param_lower_" <> show i <> ",ci_param_upper_" <> show i | i <- [0..maxP-1] ]
+              ciBody = intercalate ","
+                    $ Prelude.map (\(CI _ l h) -> show l <> "," <> show h) ciVals
+                    ++ Prelude.replicate (2 * (maxP - length ciVals)) ""
+          pure $ "\n" <> ciHdr <> "\n" <> ciBody
+    _ -> pure ""
+
+  pure . SimpleStr $ "e-class " <> show eid
+                   <> " (canonical: " <> show canonical <> ")\n"
+                   <> treeStr <> "\n"
+                   <> fitStr <> ciStr
+
+-- | DB-native profile data: compute profile likelihood for each parameter
+-- and return the raw spline data (taus, thetas) plus pairwise contours.
+-- Output format: two CSV sections separated by a blank line.
+-- Section 1 (profile data): param,tau,theta_0,...,theta_k,opt
+-- Section 2 (contour data): i,j,theta_i,theta_j
+run (DBProfileData fname fitPath ds eid dataPath) = do
+  -- Extract expression from DB
+  mTree <- liftIO $ withBackend fname $ \db -> extractBestFromDB db eid
+
+  case mTree of
+    Nothing -> pure . SimpleStr $ "extraction failed for e-class " <> show eid
+    Just tree -> do
+      -- Get theta from fit DB
+      thetaText <- liftIO $ withBackend fitPath $ \fitDb -> do
+        dsid <- Q.getOrCreateDataset fitDb ds
+        rows <- queryDb fitDb
+          "SELECT theta FROM dataset_fit WHERE dataset_id = ? AND eid = ?"
+          [SqlInteger (fromIntegral dsid), SqlInteger (fromIntegral eid)]
+        case rows of
+          [[th]] -> pure (sqlToText th)
+          _      -> pure ""
+
+      let theta = case parseTheta (T.unpack thetaText) of
+            []    -> VU.empty
+            (v:_) -> v
+
+      if VU.length theta < 2
+        then pure . SimpleStr $ "theta has fewer than 2 parameters, cannot profile"
+        else do
+          -- Load dataset
+          ((xTr, yTr, _, _), (mYErr, _), _, _) <- liftIO $ loadDataset dataPath True
+          let dist = Gaussian
+              nSamples = VU.length yTr
+              kTree = countParamsUniq tree
+              nNoiseParams = 1  -- Gaussian adds sigma parameter
+              k = min (VU.length theta) (kTree + nNoiseParams)
+              thetaProf = VU.take k theta
+              et = compileTree dist xTr yTr mYErr tree
+
+          -- Find correct MLE via random restarts (stored theta may be wrong)
+          let nRestarts = 10 :: Int
+              optimizer = ctOptimizer et
+          mOptTheta <- liftIO $ Control.Exception.try $ do
+            restarts <- mapM (\_ -> do
+              theta0 <- VU.replicateM k (pure (fromRational (toRational (unsafePerformIO (randomRIO (-5.0, 5.0) :: IO Double)))))
+              let thetaOpt = optimizer theta0
+              pure (ctNLL et thetaOpt, thetaOpt)
+              ) [1..nRestarts]
+            let storedOpt = optimizer thetaProf
+                storedNll = ctNLL et storedOpt
+                (bestNll, bestTheta) = minimum restarts
+            pure $ if storedNll < bestNll then storedOpt else bestTheta
+
+          case mOptTheta of
+            Left (ex :: SomeException) -> pure . SimpleStr $ "MLE optimization failed: " ++ show ex
+            Right mleTheta -> do
+              -- Get standard errors from Hessian at MLE
+              let stdErrsMle = _stdErr $ getStatsFromModel dist mYErr xTr yTr tree mleTheta
+
+              -- Run Bates profiling with correct MLE
+              mBatesProfiles <- liftIO $ Control.Exception.try $
+                getAllProfiles Bates et mleTheta stdErrsMle [] 0.05
+
+              case mBatesProfiles of
+                Left (ex :: SomeException) -> pure . SimpleStr $ "Bates profiling failed: " ++ show ex
+                Right batesProfiles -> do
+                  let -- Take only tree-parameter profiles
+                      batesTreeProfiles = Prelude.take kTree batesProfiles
+                      nTreeProfs = length batesTreeProfiles
+
+                      -- Section 1: profile data from Bates walk
+                      profileLines = concatMap (profileToCSV nTreeProfs) (zip [0..] batesTreeProfiles)
+                      -- Section 2: contour from Bates profiles (proper splines)
+                      contourLines = if nTreeProfs >= 2
+                        then ["i,j,theta_i,theta_j"]
+                             ++ [ show i <> "," <> show j <> "," <> show ti <> "," <> show tj
+                                | (i,j) <- [(i,j) | i <- [0..nTreeProfs-1], j <- [i+1..nTreeProfs-1]]
+                                , (ti, tj) <- approximateContour kTree nSamples batesTreeProfiles i j 0.05
+                                ]
+                        else []
+
+                      result = unlines $
+                        ["param,tau," <> intercalate "," [ "theta_" <> show c | c <- [0..nTreeProfs-1] ] <> ",opt"]
+                        ++ profileLines
+                        ++ [""]
+                        ++ contourLines
+
+                  mResult <- liftIO $ Control.Exception.try (evaluate (force result) :: IO String)
+                  case mResult of
+                    Left (ex :: SomeException) -> pure . SimpleStr $ "profiling failed: " ++ show ex
+                    Right r -> pure . SimpleStr $ r
+
+-- | DB-native optimize: extract the best expression, re-fit with NLopt,
+-- write fitness back to dataset_fit. No in-memory graph needed for extraction;
+-- fitting uses the dataset loaded inside this command.
+run (DBOptimize fname fitPath ds eid ci lossName) = do
+  let loss = fromMaybe (NLL Gaussian) (readLoss lossName)
+  mTree <- liftIO $ withBackend fname $ \db -> extractBestFromDB db eid
+  case mTree of
+    Nothing -> pure $ SimpleStr "e-class not found or extraction failed"
+    Just tree -> do
+      -- Load dataset for fitting
+      dataTrainsWP' <- liftIO $ Prelude.mapM (flip loadDataset True) (words ds)
+      let dataTrains = Prelude.map (\((a, b, _, _), (c, _), v, _) -> ((a,b,c), v)) dataTrainsWP'
+          trainDatas = Prelude.map fst dataTrains
+          t = relabelParams tree
+      -- Fit with NLopt using the monadic fitnessFunRep
+      let dataTrainsVals = Prelude.zip trainDatas (Prelude.map snd dataTrains)
+      response <- forM dataTrainsVals $ \(dt, dv) -> fitnessFunRep 100 loss dt t
+      let fitness = Prelude.minimum (Prelude.map fst response)
+          thetas = Prelude.map snd response
+          thetaText = T.pack (serializeTheta thetas)
+      -- Write to dataset_fit
+      liftIO $ withBackend fitPath $ \fitDb -> do
+        dsid <- Q.getOrCreateDataset fitDb ds
+        Q.writeDatasetFit fitDb dsid eid (Just fitness) Nothing thetaText 0
+      pure $ SimpleStr ("optimized e-class " <> show eid <> ": fitness=" <> show fitness)
+
+-- | DB-native subtrees: walk the best expression tree from DB pages and
+-- collect all reachable e-class IDs. No in-memory graph needed.
+run (DBSubtrees fname fitPath ds eid) = do
+  eids <- liftIO $ withBackend fname $ \db -> expandTreeFromDB db eid
+  pure . SimpleStr $ intercalate "," (map show eids)
+
+-- | DB-native getNExprs: extract up to N expression variants from a single
+-- e-class by reading its page and iterating over e-nodes.
+run (DBGetNExprs fname fitPath ds n eid) = do
+  exprs <- liftIO $ withBackend fname $ \db -> do
+    mPage <- readPage db eid
+    case mPage of
+      Nothing -> pure []
+      Just page -> do
+        let ec = decode page :: EClass
+            nodes = Prelude.take n $ Set.toList (_eNodes ec)
+        forM nodes $ \en -> extractTreeFromNode db IntSet.empty 0 en
+  let rows = [showExpr t | Just t <- exprs]
+  pure . SimpleStr $ intercalate "\n" ("Expression" : rows)
+
+-- | DB-native getNEclasses: like getNExprs but returns e-class ID sets.
+run (DBGetNEclasses fname fitPath ds n eid) = do
+  eclassSets <- liftIO $ withBackend fname $ \db -> do
+    mPage <- readPage db eid
+    case mPage of
+      Nothing -> pure []
+      Just page -> do
+        let ec = decode page :: EClass
+            nodes = Prelude.take n $ Set.toList (_eNodes ec)
+        forM nodes $ \en -> do
+          let ids = collectEClassIds en
+          pure ids
+  let rows = [intercalate "," (map show ids) | ids <- eclassSets]
+  pure . SimpleStr $ intercalate "\n" ("EClassIds" : rows)
+
+-- | DB-native eclass-terminals: walk all e-nodes in a class and collect
+-- unique terminals (Var, Param, Const) with cycle detection.
+run (DBEClassTerminals fname fitPath ds eid) = do
+  terminals <- liftIO $ withBackend fname $ \db -> do
+    mPage <- readPage db eid
+    case mPage of
+      Nothing -> pure []
+      Just page -> do
+        let ec = decode page :: EClass
+            nodes = Set.toList (_eNodes ec)
+        collectAllTerminals db eid nodes
+  let rows = map (\(typ, name) -> typ <> "," <> name) terminals
+  pure . SimpleStr $ intercalate "\n" ("Type,Name" : rows)
+
+-- | DB-native top with pattern matching: memory-bounded approach.
+-- 1. Query top M candidates by fitness from dataset_fit (M >> N)
+-- 2. For each candidate, load its best-expression tree and check pattern match
+-- 3. Return the first N that match, with wildcard bindings
+-- Memory is O(M + depth) — no full match result set in memory.
+run (DBTopPattern fname fitPath ds n patStr isRoot negate ci) = do
+  -- 1. Parse pattern
+  let etree = parsePat (B.pack patStr)
+  case etree of
+    Left _ -> pure . SimpleStr $ "no parse for " <> patStr
+    Right pat -> do
+      let wildcards = collectWildcards pat
+      -- 2. Get top M candidates by fitness (M = 10x requested N, bounded)
+      let multiplier = 10
+          m = n * multiplier
+      candidates <- liftIO $ withBackend fitPath $ \fitDb -> do
+        dsid <- Q.getOrCreateDataset fitDb ds
+        Q.topN fitDb dsid m
+      -- 3. Check each candidate: extract its best tree and match against pattern
+      matches <- liftIO $ withBackend fname $ \egDb ->
+        fmap catMaybes $ forM candidates $ \(eid, fit) -> do
+          mTree <- extractBestFromDB egDb eid
+          case mTree of
+            Nothing -> pure Nothing
+            Just tree -> do
+              let treePat = cata (\t -> Fixed t) tree
+                  matched = if isRoot
+                    then patternMatches pat treePat
+                    else patternMatchesAny pat treePat
+                  keep = if negate then not matched else matched
+              if keep
+                then case matchTree pat tree of
+                       Just bindings -> pure $ Just (eid, fit, bindings)
+                       Nothing       -> pure $ Just (eid, fit, Map.empty)
+                else pure Nothing
+      -- 4. Extract expressions for the final results
+      rows <- liftIO $ withBackend fname $ \egDb ->
+        forM (Prelude.take n matches) $ \(eid, fit, bindings) -> do
+          mTree <- extractBestFromDB egDb eid
+          pure (eid, fit, mTree, bindings)
+      -- 5. For CI, read theta from fit DB and load dataset
+      (thetaMap, mDataLoaded) <- case ci of
+        Nothing -> pure ([], Nothing)
+        Just dataPath -> do
+          tm <- liftIO $ withBackend fitPath $ \fitDb -> do
+            dsid <- Q.getOrCreateDataset fitDb ds
+            let eids = map (\(eid,_,_,_) -> eid) rows
+                inClause = "(" <> T.pack (intercalate "," (map show eids)) <> ")"
+            thRows <- queryDb fitDb
+              ("SELECT eid, theta FROM dataset_fit WHERE dataset_id = ? AND eid IN " <> inClause)
+              [SqlInteger (fromIntegral dsid)]
+            pure [ (sqlToInt e, sqlToText t) | [e, t] <- thRows ]
+          md <- liftIO $ do
+            ((xTr, yTr, _, _), (mYErr, _), _, _) <- loadDataset dataPath True
+            pure $ Just (xTr, yTr, mYErr)
+          pure (tm, md)
+      -- 6. Format output
+      let header = "Id,Expression,Fitness" <> concat ["," <> vname | (_, vname) <- wildcards]
+      body <- forM rows $ \(eid, fit, mTree, bindings) ->
+        case mTree of
+          Nothing -> pure $ show eid <> ",<extraction failed>," <> show fit
+                             <> concat (Prelude.replicate (length wildcards) ",?")
+          Just tree -> do
+            let t = showExpr tree
+                wcCols = concatMap (\(c, vname) ->
+                           case Map.lookup c bindings of
+                             Just subtree -> "," <> showExpr subtree
+                             Nothing      -> ",?")
+                         wildcards
+                base = intercalate "," [show eid, t, show fit] <> wcCols
+            case (ci, mDataLoaded) of
+              (Just _, Just (xTr, yTr, mYErr)) -> do
+                let thetaText = lookup eid thetaMap
+                    theta = case thetaText of
+                      Nothing -> VU.empty
+                      Just th -> case parseTheta (T.unpack th) of
+                        []    -> VU.empty
+                        (v:_) -> v
+                    dist = Gaussian
+                    nSamples = VU.length yTr
+                    et = compileTree dist xTr yTr mYErr tree
+                    stats = getStatsFromModel dist mYErr xTr yTr tree theta
+                profiles <- liftIO $ getAllProfiles Bates et theta (_stdErr stats) [] 0.05
+                let ciVals = paramCI (Profile stats profiles) nSamples theta 0.05
+                    maxP = VU.length theta
+                    ciStr = intercalate ","
+                          $ Prelude.map (\(CI _ l h) -> show l <> "," <> show h) ciVals
+                          ++ Prelude.replicate (2 * (maxP - length ciVals)) ""
+                pure $ base <> "," <> ciStr
+              _ -> pure base
+      pure . SimpleStr $ intercalate "\n" (header : body)
 
 -- | Out-of-core seed import: stream every expression from the CSV file
 -- directly into the database (structural, content-addressed) instead of first
@@ -970,10 +1340,389 @@ run (EqSatStep n dataInfo) = do createDB
 run (GetNExprs n eid) = do ts <- getNExpressionsFrom n eid
                            pure $ MultiTrees ts
 
-run (GetNEclass n eid) = do ids <- getNEclassFrom n eid
-                            pure $ MultiClass ids -- $ [(i, IntMap.empty) | i <- ids]
+run (GetNEclass n eid) = do
+  ids <- getNEclassFrom n eid
+  pure $ MultiClass ids
+
 -- dataInfo = (dist, trainDatas, testData)
 --  runEqSat myCost rewrites 1
+
+-- * DB-native bounded-N commands (top-N with hard cap of 10000)
+
+-- | DB-native distribution: pattern enumeration over top-N expressions.
+run (DBDistribution fname fitPath ds n) = do
+  let n' = clampN n
+  candidates <- liftIO $ withBackend fitPath $ \fitDb -> do
+    dsid <- Q.getOrCreateDataset fitDb ds
+    Q.topN fitDb dsid n'
+  results <- liftIO $ withBackend fname $ \egDb ->
+    fmap (Map.unionsWith addTuple) $ forM candidates $ \(eid, fit) -> do
+      mTree <- extractBestFromDB egDb eid
+      case mTree of
+        Nothing -> pure Map.empty
+        Just tree -> pure $ Map.map (, fit) (getAllPatternsOnTree tree)
+  let averaged = Map.map (\(v1, v2) -> (v1, v2 / fromIntegral v1)) results
+      sorted = sortOn (Down . snd . snd) (Map.toList averaged)
+      header = "Pattern,Count,AvgFitness"
+      body = [ show p <> "," <> show cnt <> "," <> show avgFit
+             | (p, (cnt, avgFit)) <- sorted ]
+  pure . SimpleStr $ intercalate "\n" (header : body)
+
+-- | DB-native modularity: find reusable sub-components in top-N expressions.
+run (DBModularity fname fitPath ds n) = do
+  let n' = clampN n
+  candidates <- liftIO $ withBackend fitPath $ \fitDb -> do
+    dsid <- Q.getOrCreateDataset fitDb ds
+    Q.topN fitDb dsid n'
+  freqMap <- liftIO $ withBackend fname $ \egDb ->
+    foldM (\acc (eid, _) -> do
+      eids <- expandTreeFromDB egDb eid
+      pure $ foldl' (\m e -> Map.insertWith (+) e (1 :: Int) m) acc eids
+    ) Map.empty candidates
+  let reusable = Map.filter (> 1) freqMap
+      sorted = sortOn (Down . snd) (Map.toList reusable)
+      header = "SubEClassId,RefCount"
+      body = [ show eid <> "," <> show cnt | (eid, cnt) <- sorted ]
+  pure . SimpleStr $ intercalate "\n" (header : body)
+
+-- | DB-native count-pattern: count structural pattern matches in top-N expressions.
+run (DBCountPat fname fitPath ds patStr n) = do
+  let n' = clampN n
+  case parsePat (B.pack patStr) of
+    Left _ -> pure . SimpleStr $ "no parse for " <> patStr
+    Right pat -> do
+      candidates <- liftIO $ withBackend fitPath $ \fitDb -> do
+        dsid <- Q.getOrCreateDataset fitDb ds
+        Q.topN fitDb dsid n'
+      count <- liftIO $ withBackend fname $ \egDb ->
+        foldM (\acc (eid, _) -> do
+          mTree <- extractBestFromDB egDb eid
+          case mTree of
+            Nothing -> pure acc
+            Just tree -> do
+              let treePat = cata (\t -> Fixed t) tree
+                  matched = patternMatches pat treePat || patternMatchesAny pat treePat
+              pure (if matched then acc + 1 else acc)
+        ) 0 candidates
+      pure . SimpleStr $ "pattern '" <> patStr <> "' matched " <> show count <> " of " <> show n' <> " expressions"
+
+-- | DB-native pattern-map: show wildcard bindings for pattern matches in top-N.
+run (DBPatternMap fname fitPath ds patStr n) = do
+  let n' = clampN n
+  case parsePat (B.pack patStr) of
+    Left _ -> pure . SimpleStr $ "no parse for " <> patStr
+    Right pat -> do
+      let wildcards = collectWildcards pat
+      candidates <- liftIO $ withBackend fitPath $ \fitDb -> do
+        dsid <- Q.getOrCreateDataset fitDb ds
+        Q.topN fitDb dsid n'
+      matches <- liftIO $ withBackend fname $ \egDb ->
+        fmap catMaybes $ forM candidates $ \(eid, fit) -> do
+          mTree <- extractBestFromDB egDb eid
+          case mTree of
+            Nothing -> pure Nothing
+            Just tree -> do
+              let treePat = cata (\t -> Fixed t) tree
+                  matched = patternMatches pat treePat || patternMatchesAny pat treePat
+              if matched
+                then case matchTree pat tree of
+                       Just bindings -> pure $ Just (eid, fit, tree, bindings)
+                       Nothing       -> pure Nothing
+                else pure Nothing
+      let header = "Id,Expression,Fitness" <> concat ["," <> vname | (_, vname) <- wildcards]
+          body = [ intercalate "," [show eid, showExpr tree, show fit]
+                    <> concatMap (\(c, vname) ->
+                         case Map.lookup c bindings of
+                           Just subtree -> "," <> showExpr subtree
+                           Nothing      -> ",?")
+                   wildcards
+                 | (eid, fit, tree, bindings) <- matches ]
+      pure . SimpleStr $ intercalate "\n" (header : body)
+
+-- | DB-native extract-pattern: enumerate patterns in a single expression.
+run (DBExtractPat fname fitPath ds eid) = do
+  mTree <- liftIO $ withBackend fname $ \db -> extractBestFromDB db eid
+  case mTree of
+    Nothing -> pure . SimpleStr $ "e-class " <> show eid <> " not found or extraction failed"
+    Just tree -> do
+      let pats = getAllPatternsOnTree tree
+          sorted = sortOn (Down . snd) (Map.toList pats)
+          header = "Pattern,Count"
+          body = [ show p <> "," <> show c | (p, c) <- sorted ]
+      pure . SimpleStr $ intercalate "\n" (header : body)
+
+-- | DB-native distributionOfTokens: count token frequencies in top-N expressions.
+run (DBDistTokens fname fitPath ds n) = do
+  let n' = clampN n
+  candidates <- liftIO $ withBackend fitPath $ \fitDb -> do
+    dsid <- Q.getOrCreateDataset fitDb ds
+    Q.topN fitDb dsid n'
+  results <- liftIO $ withBackend fname $ \egDb ->
+    fmap (Map.unionsWith addTuple) $ forM candidates $ \(eid, fit) -> do
+      mTree <- extractBestFromDB egDb eid
+      case mTree of
+        Nothing -> pure Map.empty
+        Just tree -> pure $ Map.map (, fit) (getAllTokensOnTree tree)
+  let averaged = Map.map (\(v1, v2) -> (v1, v2 / fromIntegral v1)) results
+      sorted = sortOn (Down . snd . snd) (Map.toList averaged)
+      header = "Token,Count,AvgFitness"
+      body = [ show t <> "," <> show cnt <> "," <> show avgFit
+             | (t, (cnt, avgFit)) <- sorted ]
+  pure . SimpleStr $ intercalate "\n" (header : body)
+
+-- | Helper: add tuples element-wise
+addTuple :: (Int, Double) -> (Int, Double) -> (Int, Double)
+addTuple (a, b) (c, d) = (a + c, b + d)
+
+-- | Max N cap for bounded DB-native commands
+maxBoundedN :: Int
+maxBoundedN = 10000
+
+clampN :: Int -> Int
+clampN n = Prelude.min n maxBoundedN
+
+-- | Pure pattern enumeration on a Fix SRTree (no IO, no state).
+-- Returns Map Pattern Int counting occurrences of each structural sub-pattern.
+getAllPatternsOnTree :: Fix SRTree -> Map.Map Pattern Int
+getAllPatternsOnTree tree = go Map.empty tree
+  where
+    go acc (Fix (Var ix))     = Map.insertWith (+) (Fixed (Var ix)) 1
+                                $ Map.insertWith (+) (VarPat 'A') 1 acc
+    go acc (Fix (Param ix))   = Map.insertWith (+) (Fixed (Param ix)) 1
+                                $ Map.insertWith (+) (VarPat 'A') 1 acc
+    go acc (Fix (Const x))    = Map.insertWith (+) (Fixed (Const x)) 1
+                                $ Map.insertWith (+) (VarPat 'A') 1 acc
+    go acc (Fix (Uni f t))    = let pats = go Map.empty t
+                                    acc' = Map.insertWith (+) (VarPat 'A') 1 acc
+                                in Map.unionWith (+) acc'
+                                   (Map.mapKeys (\t' -> Fixed (Uni f t')) pats)
+    go acc (Fix (Bin op l r)) = let patsL = go Map.empty l
+                                    patsR = go Map.empty r
+                                    acc'  = Map.insertWith (+) (VarPat 'A') 1 acc
+                                in Map.unionWith (+) acc'
+                                   (Map.fromList [(relabelVarPat (Fixed (Bin op l' r')), min vl vr)
+                                                 | (l', vl) <- Map.toList patsL
+                                                 , (r', vr) <- Map.toList patsR])
+    go acc (Fix (Y _))        = Map.insertWith (+) (VarPat 'A') 1 acc
+
+-- | Pure token frequency counting on a Fix SRTree.
+-- Counts operator shapes (e.g., "how many Add, how many Exp").
+getAllTokensOnTree :: Fix SRTree -> Map.Map Pattern Int
+getAllTokensOnTree tree = go Map.empty tree
+  where
+    go acc (Fix (Var ix))     = Map.insertWith (+) (Fixed (Var ix)) 1 acc
+    go acc (Fix (Param ix))   = Map.insertWith (+) (Fixed (Param ix)) 1 acc
+    go acc (Fix (Const x))    = Map.insertWith (+) (Fixed (Const x)) 1 acc
+    go acc (Fix (Uni f t))    = Map.insertWith (+) (Fixed (Uni f (VarPat 'A'))) 1
+                                $ go acc t
+    go acc (Fix (Bin op l r)) = Map.insertWith (+) (Fixed (Bin op (VarPat 'A') (VarPat 'B'))) 1
+                                $ go (go acc l) r
+    go acc (Fix (Y _))        = acc
+
+-- * DB-native helper functions (for commands that don't load in-memory EGraph)
+
+-- | Collect all eclass IDs reachable from a root by walking @_best@ pointers
+-- through DB pages. O(depth) memory, no in-memory EGraph needed.
+expandTreeFromDB :: SqlBackend db => db -> EClassId -> IO [EClassId]
+expandTreeFromDB db root = IntSet.toList <$> go IntSet.empty 0 root
+  where
+    go seen _ eid | IntSet.member eid seen = pure seen
+    go seen n _ | n >= 200 = pure seen
+    go seen n eid = do
+      mPage <- readPage db eid
+      case mPage of
+        Nothing -> pure (IntSet.insert eid seen)
+        Just page -> do
+          let ec = decode page :: EClass
+              seen' = IntSet.insert eid seen
+              best = _best (_info ec)
+          goNode seen' (n+1) best
+
+    goNode seen _ (EVar _)   = pure seen
+    goNode seen _ (EParam _) = pure seen
+    goNode seen _ (EConst _) = pure seen
+    goNode seen n (EUni _ t) = go seen n t
+    goNode seen n (EBin _ l r) = do
+      s <- go seen n l
+      go s n r
+    goNode seen n (ENAry _ m) =
+      foldM (\s (cid, _) -> go s n cid) seen (IntMap.toAscList m)
+
+-- Helper: extract a tree from a single ENode (for DBGetNExprs)
+extractTreeFromNode :: SqlBackend db => db -> IntSet.IntSet -> Int -> ENode -> IO (Maybe (Fix SRTree))
+extractTreeFromNode _ _ _ (EVar ix)   = pure (Just (Fix (Var ix)))
+extractTreeFromNode _ _ _ (EParam ix) = pure (Just (Fix (Param ix)))
+extractTreeFromNode _ _ _ (EConst x)  = pure (Just (Fix (Const x)))
+extractTreeFromNode db seen n (EUni f t) = do
+  mt <- extractTreeFromPage db seen (n+1) t
+  pure $ Fix . Uni f <$> mt
+extractTreeFromNode db seen n (EBin op l r) = do
+  ml <- extractTreeFromPage db seen (n+1) l
+  case ml of
+    Nothing -> pure Nothing
+    Just l' -> do
+      mr <- extractTreeFromPage db seen (n+1) r
+      pure $ Fix . Bin op l' <$> mr
+extractTreeFromNode db seen n (ENAry op m) = do
+  let children = IntMap.toAscList m
+  mts <- expandNaryNodes db seen (n+1) children
+  pure $ naryTreeOp op <$> mts
+
+extractTreeFromPage :: SqlBackend db => db -> IntSet.IntSet -> Int -> EClassId -> IO (Maybe (Fix SRTree))
+extractTreeFromPage _ _ n _ | n >= 200 = pure Nothing
+extractTreeFromPage db seen n eid
+  | IntSet.member eid seen = pure Nothing
+  | otherwise = do
+      mPage <- readPage db eid
+      case mPage of
+        Nothing -> pure Nothing
+        Just page -> do
+          let ec = decode page :: EClass
+              nodes = Set.toList (_eNodes ec)
+          case nodes of
+            [] -> pure Nothing
+            (en : _) -> extractTreeFromNode db (IntSet.insert eid seen) n en
+
+expandNaryNodes :: SqlBackend db => db -> IntSet.IntSet -> Int -> [(EClassId, Int)] -> IO (Maybe [Fix SRTree])
+expandNaryNodes _ _ _ [] = pure (Just [])
+expandNaryNodes db seen n ((cid, cnt) : rest) = do
+  mc <- extractTreeFromPage db seen n cid
+  case mc of
+    Nothing -> pure Nothing
+    Just c -> do
+      mrest <- expandNaryNodes db seen (n+1) rest
+      case mrest of
+        Nothing -> pure Nothing
+        Just rs -> pure (Just (replicate (min cnt (200 - n)) c ++ rs))
+
+naryTreeOp :: NOp -> [Fix SRTree] -> Fix SRTree
+naryTreeOp _ [] = Fix (Var 0)
+naryTreeOp op ts = foldr1 (\a b -> Fix (Bin (toOp op) a b)) ts
+
+-- Helper: collect e-class IDs from an ENode (for DBGetNEclasses)
+collectEClassIds :: ENode -> [EClassId]
+collectEClassIds (EVar _)   = []
+collectEClassIds (EParam _) = []
+collectEClassIds (EConst _) = []
+collectEClassIds (EUni _ t) = [t]
+collectEClassIds (EBin _ l r) = [l, r]
+collectEClassIds (ENAry _ m) = IntMap.keys m
+
+-- | Collect unique terminals from all e-nodes in a class, walking children
+-- through DB pages with cycle detection.
+collectAllTerminals :: SqlBackend db => db -> EClassId -> [ENode] -> IO [(String, String)]
+collectAllTerminals db root nodes = do
+  let initTerms = concatMap nodeTerminals nodes
+  goTerms IntSet.empty 0 (concatMap nodeChildIds nodes) (nub initTerms)
+  where
+    nodeTerminals (EVar ix)   = [("Var", "x" <> show ix)]
+    nodeTerminals (EParam ix) = [("Param", "t" <> show ix)]
+    nodeTerminals (EConst x)  = [("Const", show x)]
+    nodeTerminals _           = []
+
+    nodeChildIds (EUni _ t)   = [t]
+    nodeChildIds (EBin _ l r) = [l, r]
+    nodeChildIds (ENAry _ m)  = IntMap.keys m
+    nodeChildIds _            = []
+
+    goTerms _ _ [] terms = pure terms
+    goTerms seen n (eid':rest) terms
+      | n >= 200 = pure terms
+      | IntSet.member eid' seen = goTerms seen n rest terms
+      | otherwise = do
+          mPage <- readPage db eid'
+          case mPage of
+            Nothing -> goTerms (IntSet.insert eid' seen) (n+1) rest terms
+            Just page -> do
+              let ec = decode page :: EClass
+                  nodes' = Set.toList (_eNodes ec)
+                  terms' = terms ++ concatMap nodeTerminals nodes'
+                  children = concatMap nodeChildIds nodes'
+                  seen' = IntSet.insert eid' seen
+              goTerms seen' (n+1) (rest ++ children) (nub terms')
+
+-- * Pattern matching helpers for DBTopPattern
+
+-- | Does the pattern match the expression tree at the root?
+patternMatches :: Pattern -> Pattern -> Bool
+patternMatches (Fixed (Var ix)) (Fixed (Var jx))       = ix == jx
+patternMatches (Fixed (Param ix)) (Fixed (Param jx))   = ix == jx
+patternMatches (Fixed (Const x)) (Fixed (Const y))     = x == y
+patternMatches (Fixed (Uni _ pp)) (Fixed (Uni _ tp))   = patternMatches pp tp
+patternMatches (Fixed (Bin _ pl pr)) (Fixed (Bin _ tl tr)) =
+  patternMatches pl tl && patternMatches pr tr
+patternMatches (VarPat _) _                             = True
+patternMatches (NAry _ _) (Fixed (Bin _ _ _))          = True
+patternMatches (NAry _ _) (Fixed (Uni _ _))            = True
+patternMatches _ _                                      = False
+
+-- | Does the pattern match at ANY position (root or sub-expression) in the tree?
+patternMatchesAny :: Pattern -> Pattern -> Bool
+patternMatchesAny pat tree =
+  patternMatches pat tree || any (patternMatchesAny pat) (patChildrenOf tree)
+
+-- | Direct children of a Pattern node (for tree walking).
+patChildrenOf :: Pattern -> [Pattern]
+patChildrenOf (Fixed (Uni _ t))   = [t]
+patChildrenOf (Fixed (Bin _ l r)) = [l, r]
+patChildrenOf _                   = []
+
+-- * Pure tree matcher: match a Pattern against a concrete Fix SRTree,
+-- returning wildcard bindings. Unlike the e-graph matcher, this works
+-- on a single extracted tree without loading the graph.
+
+-- | Match a Pattern against a concrete tree, returning wildcard bindings.
+-- Repeated wildcards (e.g. v0 + v0) require both occurrences to bind
+-- the same subtree.
+matchTree :: Pattern -> Fix SRTree -> Maybe (Map.Map Char (Fix SRTree))
+matchTree pat tree = go pat tree Map.empty
+  where
+    go (VarPat c) t bindings = Just (Map.insertWith checkKey c t bindings)
+    go Hole _ bindings = Just bindings
+    go (Fixed t) (Fix t') bindings = goChildren t t' bindings
+    go (NAry op ncs) (Fix (Bin bop l r)) bindings
+      | naryOpMatches op bop = goNary ncs [l, r] bindings
+    go _ _ _ = Nothing
+
+    goChildren (Uni f p) (Uni f' t) bindings
+      | f == f' = go p t bindings
+    goChildren (Bin op pl pr) (Bin op' tl tr) bindings
+      | op == op' = do
+          lb <- go pl tl bindings
+          go pr tr lb
+    goChildren (Param ix) (Param ix') bindings
+      | ix == ix' = Just bindings
+    goChildren (Var ix) (Var ix') bindings
+      | ix == ix' = Just bindings
+    goChildren (Const x) (Const x') bindings
+      | x == x' = Just bindings
+    goChildren _ _ _ = Nothing
+
+    -- Match n-ary pattern children against tree children (binary case)
+    goNary [] _ bindings = Just bindings
+    goNary _ [] bindings = Just bindings
+    goNary (Ch p : ps) (t : ts) bindings = do
+      lb <- go p t bindings
+      goNary ps ts lb
+    goNary (Rest c : _) ts bindings =
+      -- Rest captures all remaining children as a single compound tree
+      Just (Map.insertWith checkKey c (rebuildBin ts) bindings)
+    goNary (MapP _ _ : ps) ts bindings = goNary ps ts bindings  -- skip MapP (rewrite targets)
+
+    -- Rebuild a list of trees into a binary tree (for Rest variable binding)
+    rebuildBin [t] = t
+    rebuildBin (t : ts) = Fix (Bin Add t (rebuildBin ts))
+    rebuildBin [] = Fix (Const 0)
+
+    naryOpMatches EAdd Add = True
+    naryOpMatches EMul Mul = True
+    naryOpMatches _ _ = False
+
+    -- Check that repeated wildcards bind structurally equal subtrees
+    checkKey :: Fix SRTree -> Fix SRTree -> Fix SRTree
+    checkKey new old
+      | showExpr new == showExpr old = old
+      | otherwise = old  -- keep first binding (conservative on mismatch)
 
 -- * auxiliary functions
 -- | Write back any pending dirty e-class pages (durable commit point).
@@ -1116,8 +1865,6 @@ isLeft (Left _)   = True
 isLeft _          = False
 fromLeft (Left x) = x
 fromLeft _        = undefined
-
-addTuple (a, b) (c, d) = (a+c, b+d)
 
 collectWildcards :: Pattern -> [(Char, String)]
 collectWildcards = Map.toAscList . Map.fromList . go
