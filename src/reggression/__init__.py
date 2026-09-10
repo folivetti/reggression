@@ -372,15 +372,18 @@ class Reggression():
             E-class id of the e-class
         '''
         return self.runQuery(f"subtrees {self._dbSpec()} {self.dataset_name} {n}", df=False)
-    def insert(self, expr):
+    def insert(self, expr, alg="TIR"):
         ''' Insert a new expression
 
         Parameters
         ----------
         expr : str
             Expression to be inserted
+        alg : str, default="TIR"
+            Equation format/algorithm used to parse the expression (one of
+            TIR, HL, OPERON, BINGO, GOMEA, PYSR, SBP, EPLEX, NEOGP).
         '''
-        return self.runQuery(f"insert {self._dbSpec()} {self.dataset_name} {expr}", df=False)
+        return self.runQuery(f"insert {self._dbSpec()} {self.dataset_name} {alg} {expr}", df=False)
     def pareto(self, byFitness=True, ci=False):
         ''' Return the Pareto front of accuracy x size
 
@@ -597,7 +600,7 @@ class Reggression():
         fd = fitDb or self.fitDb
         dbSpec = f"{db}:{fd}" if fd else db
         return self.runQuery(f"eqsat-frontier {dbSpec} {self.dataset_name} {iterations} {ruleset}", df=False)
-    def dbInsert(self, fname="", expr="", fitDb=""):
+    def dbInsert(self, fname="", expr="", alg="TIR", fitDb=""):
         ''' Local eggp delta: insert a single expression into the DB-backed
         (out-of-core) e-graph in `fname`. Its subgraph is written through and
         content-addressed (existing subexpressions dedup against the live
@@ -622,7 +625,7 @@ class Reggression():
         db = fname or self.db
         fd = fitDb or self.fitDb
         dbSpec = f"{db}:{fd}" if fd else db
-        v = self.runQuery(f"insert {dbSpec} {self.dataset_name} {expr}", df=False)
+        v = self.runQuery(f"insert {dbSpec} {self.dataset_name} {alg} {expr}", df=False)
         return int(str(v).strip())
     def dbSetFit(self, fname="", eid=0, fitness=0.0, fitDb=""):
         ''' Record the fitness of a single e-class in `dataset_fit`, so a

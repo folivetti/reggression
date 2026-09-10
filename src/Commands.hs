@@ -102,7 +102,7 @@ data Command  = Top Int Filter Criteria PatStr Bool
                 | RefreshFit String String String
                 | DBEqSat String String String Int String
                 | DBEqSatFrontier String String String Int String
-                | DBInsert String String String String
+                | DBInsert String String String String String
                 | DBSetFit String String String Int Double
                 | DBStream String String String Int
                 | DBReport String String String Int Bool          -- fname fitPath ds eid ci
@@ -311,8 +311,10 @@ parseDBInsert = string "insert " >>= \_ -> do
   stripSp
   ds <- B.unpack <$> parseFname
   stripSp
+  alg <- B.unpack <$> parseFname
+  stripSp
   expr <- B.unpack . B.pack <$> manyTill anyChar endOfInput
-  pure (DBInsert fname fitPath ds expr)
+  pure (DBInsert fname fitPath ds alg expr)
 parseDBSetFit = string "set-fit " >>= \_ -> do
   (fname, fitPath) <- parseSplitFname
   stripSp
@@ -862,8 +864,8 @@ run (DBEqSatFrontier fname fitPath ds iters rs) = do
 -- with the in-memory 'insert') so the eggp loop can track / evaluate it, and the
 -- expression is recorded in @expression_index@ (item: "was this seen?").
 -- O(subgraph) work, O(1) memory.
-run (DBInsert fname fitPath ds expr) = do
-  let etree = parseSR TIR "" False (B.pack expr)
+run (DBInsert fname fitPath ds alg expr) = do
+  let etree = parseSR (algToAlgs alg) "" False (B.pack expr)
   r <- liftIO $ case etree of
     Left _     -> pure (Left "no parse")
     Right tree -> do
@@ -1817,6 +1819,11 @@ parseCSV dist fname hdr convertParam = do g <- (execStateT parseEqs emptyGraph) 
                            cleanDB
 getFormat :: String -> SRAlgs
 getFormat = Prelude.read . Prelude.map toUpper . Prelude.last . splitOn "."
+
+-- | Resolve an equation-format/algorithm name (e.g. \"TIR\", \"hl\", \"operon\")
+-- to the 'SRAlgs' parser to use, defaulting to TIR on an unknown name.
+algToAlgs :: String -> SRAlgs
+algToAlgs = fromMaybe TIR . readMaybe . Prelude.map toUpper
 
 
 
