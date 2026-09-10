@@ -1073,6 +1073,9 @@ run (DBProfileData fname fitPath ds eid dataPath) = do
 -- fitting uses the dataset loaded inside this command.
 run (DBOptimize fname fitPath ds eid ci lossName) = do
   let loss = fromMaybe (NLL Gaussian) (readLoss lossName)
+      -- ds is the dataset FILE PATH (to load data); the dataset identity/name
+      -- is its basename, used for the dataset_fit lookup.
+      dsetName = basenameOf ds
   mTree <- liftIO $ withBackend fname $ \db -> extractBestFromDB db eid
   case mTree of
     Nothing -> pure $ SimpleStr "e-class not found or extraction failed"
@@ -1090,7 +1093,7 @@ run (DBOptimize fname fitPath ds eid ci lossName) = do
           thetaText = T.pack (serializeTheta thetas)
       -- Write to dataset_fit
       liftIO $ withBackend fitPath $ \fitDb -> do
-        dsid <- Q.getOrCreateDataset fitDb ds
+        dsid <- Q.getOrCreateDataset fitDb dsetName
         Q.writeDatasetFit fitDb dsid eid (Just fitness) Nothing thetaText 0
       pure $ SimpleStr ("optimized e-class " <> show eid <> ": fitness=" <> show fitness)
 
@@ -1827,6 +1830,10 @@ getFormat = Prelude.read . Prelude.map toUpper . Prelude.last . splitOn "."
 -- to the 'SRAlgs' parser to use, defaulting to TIR on an unknown name.
 algToAlgs :: String -> SRAlgs
 algToAlgs = fromMaybe TIR . readMaybe . Prelude.map toUpper
+
+-- | Basename of a (dataset) file path.
+basenameOf :: String -> String
+basenameOf p = Prelude.last (splitOn "/" p)
 
 
 
