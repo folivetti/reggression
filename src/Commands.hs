@@ -63,7 +63,7 @@ import qualified Data.ByteString.Lazy as BS
 
 import Database.SQLite3 ( Database, open, close )
 import Database.PostgreSQL.LibPQ ( Connection, connectdb, finish )
-import Algorithm.EqSat.Storage.SQLite ( saveGraph, loadGraphLazy, pushFit, refreshFitness, flushStore )
+import Algorithm.EqSat.Storage.SQLite ( saveGraph, loadGraphLazy, emptyPagedGraph, pushFit, refreshFitness, flushStore )
 import Algorithm.EqSat.Storage.Postgres ()
 import Algorithm.EqSat.Storage.Backend ( SqlBackend, queryDb, SqlValue(..), sqlToText, sqlToInt, sqlToMaybeDouble )
 import Algorithm.EqSat.Storage.Import (importEqs, ImportSummary(..), recordExpressionIndex)
@@ -872,16 +872,19 @@ run (DBInsert fname fitPath ds alg expr) = do
       dsid <- withBackend fitPath $ \fitDb -> Q.getOrCreateDataset fitDb ds
       withBackend fname $ \db -> do
         er <- loadGraphLazy db dsid 50000 100000 100000
-        case er of
-          Left err -> pure (Left err)
-          Right eg -> case _classStore eg of
-            Nothing -> pure (Left "db-insert requires a paged graph")
-            Just _  -> do
-              (eid, eg') <- runStateT (fromTree myCost tree) eg
-              flushStore eg'
-              withBackend fitPath $ \fitDb -> recordExpressionIndex fitDb dsid eid
-              saveGraph db dsid eg'
-              pure (Right eid)
+        -- no e-graph stored yet: seed an empty paged graph so the first insert
+        -- works (subsequent inserts load the now-existing graph).
+        eg0 <- case er of
+          Left _  -> emptyPagedGraph db 50000 100000 100000
+          Right eg -> pure eg
+        case _classStore eg0 of
+          Nothing -> pure (Left "db-insert requires a paged graph")
+          Just _  -> do
+            (eid, eg') <- runStateT (fromTree myCost tree) eg0
+            flushStore eg'
+            withBackend fitPath $ \fitDb -> recordExpressionIndex fitDb dsid eid
+            saveGraph db dsid eg'
+            pure (Right eid)
   pure . SimpleStr $ case r of
     Left err  -> "db-insert failed: " <> err
     Right eid -> show eid
