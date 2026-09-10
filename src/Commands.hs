@@ -106,7 +106,7 @@ data Command  = Top Int Filter Criteria PatStr Bool
                 | DBSetFit String String String Int Double
                 | DBStream String String String Int
                 | DBReport String String String Int Bool          -- fname fitPath ds eid ci
-                | DBOptimize String String String Int Bool String  -- fname fitPath ds eid ci lossName
+                | DBOptimize String String String String Int Bool String  -- fname fitPath ds dataPath eid ci lossName
                 | DBSubtrees String String String Int             -- fname _fitPath ds eid
                 | DBGetNExprs String String String Int Int        -- fname _fitPath ds n eid
                 | DBGetNEclasses String String String Int Int     -- fname _fitPath ds n eid
@@ -1071,17 +1071,15 @@ run (DBProfileData fname fitPath ds eid dataPath) = do
 -- | DB-native optimize: extract the best expression, re-fit with NLopt,
 -- write fitness back to dataset_fit. No in-memory graph needed for extraction;
 -- fitting uses the dataset loaded inside this command.
-run (DBOptimize fname fitPath ds eid ci lossName) = do
+run (DBOptimize fname fitPath ds dataPath eid ci lossName) = do
   let loss = fromMaybe (NLL Gaussian) (readLoss lossName)
-      -- ds is the dataset FILE PATH (to load data); the dataset identity/name
-      -- is its basename, used for the dataset_fit lookup.
-      dsetName = basenameOf ds
   mTree <- liftIO $ withBackend fname $ \db -> extractBestFromDB db eid
   case mTree of
     Nothing -> pure $ SimpleStr "e-class not found or extraction failed"
     Just tree -> do
-      -- Load dataset for fitting
-      dataTrainsWP' <- liftIO $ Prelude.mapM (flip loadDataset True) (words ds)
+      -- Load the dataset data from its FILE PATH (dataPath) for fitting; the
+      -- dataset identity (ds) is its name, used for the dataset_fit lookup.
+      dataTrainsWP' <- liftIO $ Prelude.mapM (flip loadDataset True) (words dataPath)
       let dataTrains = Prelude.map (\((a, b, _, _), (c, _), v, _) -> ((a,b,c), v)) dataTrainsWP'
           trainDatas = Prelude.map fst dataTrains
           t = relabelParams tree
@@ -1093,7 +1091,7 @@ run (DBOptimize fname fitPath ds eid ci lossName) = do
           thetaText = T.pack (serializeTheta thetas)
       -- Write to dataset_fit
       liftIO $ withBackend fitPath $ \fitDb -> do
-        dsid <- Q.getOrCreateDataset fitDb dsetName
+        dsid <- Q.getOrCreateDataset fitDb ds
         Q.writeDatasetFit fitDb dsid eid (Just fitness) Nothing thetaText 0
       pure $ SimpleStr ("optimized e-class " <> show eid <> ": fitness=" <> show fitness)
 
@@ -1831,9 +1829,7 @@ getFormat = Prelude.read . Prelude.map toUpper . Prelude.last . splitOn "."
 algToAlgs :: String -> SRAlgs
 algToAlgs = fromMaybe TIR . readMaybe . Prelude.map toUpper
 
--- | Basename of a (dataset) file path.
-basenameOf :: String -> String
-basenameOf p = Prelude.last (splitOn "/" p)
+
 
 
 

@@ -134,11 +134,11 @@ reportCmd varnames (fname:ds:eid:rest) = case readMaybe @Int eid of
                in run (DBReport f fp ds n ci) >>= printFun varnames [] [] (NLL Gaussian)
 reportCmd varnames _ = helpCmd ["report"]
 
-optimizeCmd varnames (fname:ds:eid:rest) = case readMaybe @Int eid of
+optimizeCmd varnames (fname:ds:path:eid:rest) = case readMaybe @Int eid of
     Nothing -> pure "The id must be an integer."
     Just n  -> let (f, fp) = splitColon fname
                    lossName = if null rest then "Gaussian" else head rest
-               in run (DBOptimize f fp ds n False lossName) >>= printFun varnames [] [] (NLL Gaussian)
+               in run (DBOptimize f fp ds path n False lossName) >>= printFun varnames [] [] (NLL Gaussian)
 optimizeCmd varnames _ = helpCmd ["optimize"]
 
 subtreesCmd varnames (fname:ds:eid:_) = case readMaybe @Int eid of

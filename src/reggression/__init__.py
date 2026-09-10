@@ -350,7 +350,7 @@ class Reggression():
             Whether to include profile-likelihood confidence intervals
         '''
         cistr = " with ci" if ci else ""
-        return self.runQuery(f"optimize {self._dbSpec()} {self.dataset} {n}{cistr} {self.loss}", df=False)
+        return self.runQuery(f"optimize {self._dbSpec()} {self.dataset_name} {self.dataset} {n}{cistr} {self.loss}", df=False)
     def eqsat(self, n=1):
         ''' run n steps of equality saturation
         sequentially for each rule (see https://github.com/folivetti/srtree/blob/main/src/Algorithm/EqSat/Simplify.hs)
