@@ -15,7 +15,7 @@ import Data.Monoid (All(..))
 import qualified Data.IntMap.Strict as IntMap
 import qualified Data.IntSet as IntSet
 import Control.Monad.State.Strict
-import Control.Monad ( forM_, filterM, forM, foldM )
+import Control.Monad ( forM_, filterM, forM, foldM, when )
 import Control.Monad.IO.Class ( liftIO )
 import Control.Exception ( bracket, bracketOnError, evaluate, try, SomeException, catch )
 import Control.DeepSeq (force)
@@ -64,9 +64,9 @@ import qualified Data.ByteString.Lazy as BS
 
 import Database.SQLite3 ( Database, open, close )
 import Database.PostgreSQL.LibPQ ( Connection, connectdb, finish )
-import Algorithm.EqSat.Storage.SQLite ( saveGraph, loadGraphLazy, emptyPagedGraph, pushFit, refreshFitness, flushStore, createSchema )
+import Algorithm.EqSat.Storage.SQLite ( saveGraph, loadGraphLazy, emptyPagedGraph, pushFit, refreshFitness, flushStore, createSchema, createSchemaFit )
 import Algorithm.EqSat.Storage.Postgres ()
-import Algorithm.EqSat.Storage.Backend ( SqlBackend, queryDb, SqlValue(..), sqlToText, sqlToInt, sqlToMaybeDouble )
+import Algorithm.EqSat.Storage.Backend ( SqlBackend, queryDb, runDb, SqlValue(..), sqlToText, sqlToInt, sqlToMaybeDouble )
 import Algorithm.EqSat.Storage.Import (importEqs, ImportSummary(..), recordExpressionIndex)
 import Algorithm.EqSat.Storage.Stream (streamByOpCount, streamMatchNAry)
 import Algorithm.EqSat.Storage.ClassStore (loadFrontierRows)
@@ -106,7 +106,7 @@ data Command  = Top Int Filter Criteria PatStr Bool
                 | DBInsert String String String String String
                 | DBSetFit String String String Int Double
                 | DBStream String String String Int
-                | DBReport String String String String String Int Bool -- fname fitPath ds trainPath testPath eid ci
+                | DBReport String String String String String Int Bool String -- fname fitPath ds trainPath testPath eid ci lossName
                 | DBOptimize String String String String Int Bool String  -- fname fitPath ds dataPath eid ci lossName
                 | DBSubtrees String String String Int             -- fname _fitPath ds eid
                 | DBGetNExprs String String String Int Int        -- fname _fitPath ds n eid
@@ -121,7 +121,7 @@ data Command  = Top Int Filter Criteria PatStr Bool
                 | DBExtractPat String String String Int     -- fname fitPath ds eid
                 | DBDistTokens String String String Int     -- fname fitPath ds n
                 | DBProfileData String String String Int String  -- fname fitPath ds eid dataPath
-               | ImportDB String String String Loss String Bool
+               | ImportDB String String String String Loss String Bool
                | Import String Loss String Bool
               | EqSatStep Int ArgOpt
               | GetNExprs Int EClassId
@@ -924,7 +924,7 @@ run (DBStream fname fitPath op budget) = do
 
 -- | DB-native report: extract the best expression from the DB for a single
 -- e-class, show its canonical ID, expression, and fitness. No in-memory graph.
-run (DBReport fname fitPath ds trainPath testPath eid ci) = do
+run (DBReport fname fitPath ds trainPath testPath eid ci lossName) = do
   -- canonical id
   canonical <- liftIO $ withBackend fname $ \db -> do
     rows <- queryDb db "SELECT canonical FROM eclass WHERE eid = ?"
@@ -963,7 +963,7 @@ run (DBReport fname fitPath ds trainPath testPath eid ci) = do
         _ -> pure Nothing
 
   let dist = Gaussian
-      loss = NLL Gaussian
+      loss = fromMaybe (NLL Gaussian) (readLoss lossName)
       theta = case parseTheta (T.unpack thetaText) of [] -> VU.empty; (v:_) -> v
       thetaStr = intercalate ", " (Prelude.map show (VU.toList theta))
       treeStr  = maybe "<extraction failed>" showExpr mTree
@@ -982,10 +982,11 @@ run (DBReport fname fitPath ds trainPath testPath eid ci) = do
         _ -> (0, 0, 0, 0)
       (mseTr, r2Tr, nllTr, mdlTr) = metsOf mData
       (mseTe, r2Te, nllTe, mdlTe) = metsOf mTestData
-      -- fitness == -mean(nll); fill the Test column from the test nll when present
+      -- fitness == -loss (the same objective 'optimize' stored for training);
+      -- for the test set use the raw loss on the test data.
       fitTe = case mTestData of
         Just (_, yTe, _) | not (null testPath) && testPath /= "-" && VU.length yTe > 0
-          -> show (- nllTe / fromIntegral (VU.length yTe))
+          -> show (- nllTe)
         _ -> ""
       fmt d = if testPath == "-" || null testPath then "" else show d
       mainRows =
@@ -1282,7 +1283,7 @@ run (DBTopPattern fname fitPath ds n patStr isRoot negate ci) = do
 -- directly into the database (structural, content-addressed) instead of first
 -- building the e-graph in RAM. The produced DB is identical to 'persist' of
 -- the corresponding in-memory seed and can be saturated with 'dbEqSat'.
-run (ImportDB fname eqs ds dist varnames params) = do
+run (ImportDB fname fitPath eqs ds dist varnames params) = do
   let alg = getFormat eqs
       toT  [eq, t, f] = (eq, Prelude.map Prelude.read $ Prelude.filter (not.null) $ splitOn ";" t, fromMaybe (-1.0/0.0) $ readMaybe f)
       toT xss = error $ show xss
@@ -1294,6 +1295,15 @@ run (ImportDB fname eqs ds dist varnames params) = do
           Just (relabelP0 tree, [VU.fromList theta], Just f)
   content <- liftIO $ Prelude.map (toT . splitOn ",") . lines <$> readFile eqs
   r <- liftIO $ withBackend fname $ \db -> importEqs db (Just ds) (catMaybes (Prelude.map parseOne content))
+  -- In split-DB mode the fit data (dataset_fit, expression_index) written by
+  -- importEqs lands in the egraph DB; copy those rows to the fit DB so report/
+  -- top/optimize (which read the fit DB) see the imported fitness.
+  liftIO $ when (fitPath /= fname && not (null fitPath)) $
+    withBackend fname $ \egDb ->
+      withBackend fitPath $ \fitDb -> do
+        createSchemaFit fitDb
+        dsid <- Q.getOrCreateDataset fitDb ds
+        copyFitRows egDb dsid fitDb dsid
   pure . SimpleStr $ case r of
     Left err -> "db-import failed: " <> err
     Right s  -> "imported " <> show (isExpressions s) <> " expressions (" <> show (isClasses s) <> " e-classes) into " <> fname
@@ -2083,3 +2093,30 @@ extractEClassList ec' = do
       pure $ if uni
                 then IntMap.singleton ec_b (1, b1, sz1+1)
                 else IntMap.singleton ec_b (1, b1 + b2, sz1+sz2+1)
+
+-- | Copy @dataset_fit@ and @expression_index@ rows from the egraph DB (where
+-- 'importEqs' writes them on a single connection) into the fit DB, so split-DB
+-- queries (report/top/optimize read the fit DB) see the imported fitness.
+copyFitRows :: (SqlBackend eg, SqlBackend fit) => eg -> Int -> fit -> Int -> IO ()
+copyFitRows egDb _egDs fitDb fitDs = do
+  dsRows <- queryDb egDb
+    "SELECT eid, fitness, dl, theta, size, evaluated, fitted, stale FROM dataset_fit"
+    []
+  forM_ dsRows $ \row -> case row of
+    [eid, fit, dl, th, sz, ev, fd, st] ->
+      runDb fitDb
+        "INSERT OR REPLACE INTO dataset_fit \
+        \(dataset_id, eid, fitness, dl, theta, size, evaluated, fitted, stale) \
+        \VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        [ SqlInteger (fromIntegral fitDs)
+        , eid, fit, dl, th, sz, ev, fd, st ]
+    _ -> pure ()
+  ixRows <- queryDb egDb
+    "SELECT expression_key, eclass, dataset_id FROM expression_index"
+    []
+  forM_ ixRows $ \row -> case row of
+    [ek, ec, _] ->
+      runDb fitDb
+        "INSERT OR REPLACE INTO expression_index (expression_key, eclass, dataset_id) VALUES (?, ?, ?)"
+        [ ek, ec, SqlInteger (fromIntegral fitDs) ]
+    _ -> pure ()

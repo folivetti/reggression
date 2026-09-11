@@ -77,7 +77,7 @@ persistCmd varnames _ = helpCmd ["persist"]
 loadCmd varnames (fname:ds:_) = let (f, fp) = splitColon fname in run (LoadDB f fp ds) >>= printFun varnames [] [] (NLL Gaussian)
 loadCmd varnames _ = helpCmd ["load"]
 
-importCmd varnames loss vars (db:eqs:ds:_) = run (ImportDB db eqs ds loss vars True) >>= printFun varnames [] [] loss
+importCmd varnames loss vars (db:eqs:ds:_) = let (f, fp) = splitColon db in run (ImportDB f fp eqs ds loss vars True) >>= printFun varnames [] [] loss
 importCmd varnames _ _ _ = helpCmd ["import"]
 
 eqSatCmd varnames (fname:ds:n:rs:_) = case readMaybe @Int n of
@@ -131,7 +131,8 @@ reportCmd varnames (fname:ds:path:testData:eid:rest) = case readMaybe @Int eid o
     Nothing -> pure "The id must be an integer."
     Just n  -> let (f, fp) = splitColon fname
                    ci = "ci" `elem` rest
-               in run (DBReport f fp ds path testData n ci) >>= printFun varnames [] [] (NLL Gaussian)
+                   lossName = if null rest then "Gaussian" else head rest
+               in run (DBReport f fp ds path testData n ci lossName) >>= printFun varnames [] [] (NLL Gaussian)
 reportCmd varnames _ = helpCmd ["report"]
 
 optimizeCmd varnames (fname:ds:path:eid:rest) = case readMaybe @Int eid of

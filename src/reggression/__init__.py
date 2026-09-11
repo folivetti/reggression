@@ -339,7 +339,7 @@ class Reggression():
         '''
         cistr = " with ci" if ci else ""
         test = self.testData if self.testData else "-"
-        return self.runQuery(f"report {self._dbSpec()} {self.dataset_name} {self.dataset} {test} {n}{cistr}")
+        return self.runQuery(f"report {self._dbSpec()} {self.dataset_name} {self.dataset} {test} {n}{cistr} {self.loss}")
     def optimize(self, n, ci=False):
         ''' (re)optimize e-class n
 
