@@ -127,11 +127,11 @@ pushFitCmd varnames _ = helpCmd ["push-fit"]
 refreshFitCmd varnames (fname:ds:_) = let (f, fp) = splitColon fname in run (RefreshFit f fp ds) >>= printFun varnames [] [] (NLL Gaussian)
 refreshFitCmd varnames _ = helpCmd ["refresh-fitness"]
 
-reportCmd varnames (fname:ds:path:eid:rest) = case readMaybe @Int eid of
+reportCmd varnames (fname:ds:path:testData:eid:rest) = case readMaybe @Int eid of
     Nothing -> pure "The id must be an integer."
     Just n  -> let (f, fp) = splitColon fname
                    ci = "ci" `elem` rest
-               in run (DBReport f fp ds path n ci) >>= printFun varnames [] [] (NLL Gaussian)
+               in run (DBReport f fp ds path testData n ci) >>= printFun varnames [] [] (NLL Gaussian)
 reportCmd varnames _ = helpCmd ["report"]
 
 optimizeCmd varnames (fname:ds:path:eid:rest) = case readMaybe @Int eid of

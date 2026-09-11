@@ -106,7 +106,7 @@ data Command  = Top Int Filter Criteria PatStr Bool
                 | DBInsert String String String String String
                 | DBSetFit String String String Int Double
                 | DBStream String String String Int
-                | DBReport String String String String Int Bool   -- fname fitPath ds dataPath eid ci
+                | DBReport String String String String String Int Bool -- fname fitPath ds trainPath testPath eid ci
                 | DBOptimize String String String String Int Bool String  -- fname fitPath ds dataPath eid ci lossName
                 | DBSubtrees String String String Int             -- fname _fitPath ds eid
                 | DBGetNExprs String String String Int Int        -- fname _fitPath ds n eid
@@ -917,7 +917,7 @@ run (DBStream fname fitPath op budget) = do
 
 -- | DB-native report: extract the best expression from the DB for a single
 -- e-class, show its canonical ID, expression, and fitness. No in-memory graph.
-run (DBReport fname fitPath ds dataPath eid ci) = do
+run (DBReport fname fitPath ds trainPath testPath eid ci) = do
   -- canonical id
   canonical <- liftIO $ withBackend fname $ \db -> do
     rows <- queryDb db "SELECT canonical FROM eclass WHERE eid = ?"
@@ -939,12 +939,21 @@ run (DBReport fname fitPath ds dataPath eid ci) = do
       [[f, d, s, th]] -> pure (Just (sqlToMaybeDouble f, sqlToMaybeDouble d, sqlToInt s), sqlToText th)
       _                -> pure (Nothing, "")
 
-  -- load the dataset data (from its file path) for the metrics and CI
+  -- load the training dataset data (from its file path) for the metrics and CI
   mData <- liftIO $ do
-    datasets <- Prelude.mapM (flip loadDataset True) (words dataPath)
+    datasets <- Prelude.mapM (flip loadDataset True) (words trainPath)
     case datasets of
       (((xTr, yTr, _, _), (mYErr, _), _, _) : _) -> pure $ Just (xTr, yTr, mYErr)
       _ -> pure Nothing
+
+  -- load the test dataset (if provided) for the Test column
+  mTestData <- liftIO $ if testPath == "-" || null testPath
+    then pure Nothing
+    else do
+      datasets <- Prelude.mapM (flip loadDataset True) (words testPath)
+      case datasets of
+        (((xTe, yTe, _, _), (mYErrTe, _), _, _) : _) -> pure $ Just (xTe, yTe, mYErrTe)
+        _ -> pure Nothing
 
   let dist = Gaussian
       loss = NLL Gaussian
@@ -956,7 +965,7 @@ run (DBReport fname fitPath ds dataPath eid ci) = do
       fitStr   = case mFit of
         Nothing -> "NA"
         Just (f, _, _) -> maybe "NA" show f
-      (mseV, r2V, nllV, mdlV) = case (mTree, mData) of
+      metsOf mData' = case (mTree, mData') of
         (Just tr, Just (x, y, e)) ->
           let t = relabelParams tr
           in ( mseMetric x y t theta
@@ -964,6 +973,9 @@ run (DBReport fname fitPath ds dataPath eid ci) = do
              , nllMetric loss e x y t theta
              , mdlMetric loss e x y theta t )
         _ -> (0, 0, 0, 0)
+      (mseTr, r2Tr, nllTr, mdlTr) = metsOf mData
+      (mseTe, r2Te, nllTe, mdlTe) = metsOf mTestData
+      fmt d = if testPath == "-" || null testPath then "" else show d
       mainRows =
         "Info,Training,Test\n"
         <> "Id," <> show canonical <> ",\n"
@@ -972,10 +984,10 @@ run (DBReport fname fitPath ds dataPath eid ci) = do
         <> "Nodes," <> show numNodes <> ",\n"
         <> "params," <> thetaStr <> ",\n"
         <> "Fitness," <> fitStr <> ",\n"
-        <> "MSE," <> show mseV <> ",\n"
-        <> "R^2," <> show r2V <> ",\n"
-        <> "nll," <> show nllV <> ",\n"
-        <> "DL," <> show mdlV <> "\n"
+        <> "MSE," <> show mseTr <> "," <> fmt mseTe <> "\n"
+        <> "R^2," <> show r2Tr <> "," <> fmt r2Te <> "\n"
+        <> "nll," <> show nllTr <> "," <> fmt nllTe <> "\n"
+        <> "DL," <> show mdlTr <> "," <> fmt mdlTe <> "\n"
 
   -- CI (profile likelihood) rows appended when requested
   ciStr <- case (ci, mTree, mData) of
