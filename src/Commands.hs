@@ -64,7 +64,7 @@ import qualified Data.ByteString.Lazy as BS
 
 import Database.SQLite3 ( Database, open, close )
 import Database.PostgreSQL.LibPQ ( Connection, connectdb, finish )
-import Algorithm.EqSat.Storage.SQLite ( saveGraph, loadGraphLazy, emptyPagedGraph, pushFit, refreshFitness, flushStore )
+import Algorithm.EqSat.Storage.SQLite ( saveGraph, loadGraphLazy, emptyPagedGraph, pushFit, refreshFitness, flushStore, createSchema )
 import Algorithm.EqSat.Storage.Postgres ()
 import Algorithm.EqSat.Storage.Backend ( SqlBackend, queryDb, SqlValue(..), sqlToText, sqlToInt, sqlToMaybeDouble )
 import Algorithm.EqSat.Storage.Import (importEqs, ImportSummary(..), recordExpressionIndex)
@@ -872,6 +872,10 @@ run (DBInsert fname fitPath ds alg expr) = do
     Right tree -> do
       dsid <- withBackend fitPath $ \fitDb -> Q.getOrCreateDataset fitDb ds
       withBackend fname $ \db -> do
+        -- ensure the egraph tables (enode, eclass_node, ...) exist on the egraph
+        -- DB. With a separate fit DB this is required before the first insert,
+        -- because node insertion dedupes against eclass_node.
+        createSchema db
         er <- loadGraphLazy db dsid 50000 100000 100000
         -- no e-graph stored yet: seed an empty paged graph so the first insert
         -- works (subsequent inserts load the now-existing graph).
@@ -883,8 +887,11 @@ run (DBInsert fname fitPath ds alg expr) = do
           Just _  -> do
             (eid, eg') <- runStateT (fromTree myCost tree) eg0
             flushStore eg'
-            withBackend fitPath $ \fitDb -> recordExpressionIndex fitDb dsid eid
             saveGraph db dsid eg'
+            -- saveGraph creates the egraph schema, so the egraph DB now has the
+            -- eclass_node table recordExpressionIndex reads; the expression_index
+            -- row itself goes to the fit DB (which may be a separate file).
+            withBackend fitPath $ \fitDb -> recordExpressionIndex db fitDb dsid eid
             pure (Right eid)
   pure . SimpleStr $ case r of
     Left err  -> "db-insert failed: " <> err
