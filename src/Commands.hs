@@ -35,6 +35,7 @@ import Data.SRTree
 import Data.SRTree.Datasets
 import Data.SRTree.Recursion
 import Data.SRTree.Eval
+import Data.SRTree.Internal (countNodes, convertProtectedOps)
 import Data.SRTree.Print hiding ( printExpr )
 import Text.ParseSR (SRAlgs(..), parseSR, Output(..), showOutput)
 import System.Random
@@ -105,7 +106,7 @@ data Command  = Top Int Filter Criteria PatStr Bool
                 | DBInsert String String String String String
                 | DBSetFit String String String Int Double
                 | DBStream String String String Int
-                | DBReport String String String Int Bool          -- fname fitPath ds eid ci
+                | DBReport String String String String Int Bool   -- fname fitPath ds dataPath eid ci
                 | DBOptimize String String String String Int Bool String  -- fname fitPath ds dataPath eid ci lossName
                 | DBSubtrees String String String Int             -- fname _fitPath ds eid
                 | DBGetNExprs String String String Int Int        -- fname _fitPath ds n eid
@@ -916,19 +917,19 @@ run (DBStream fname fitPath op budget) = do
 
 -- | DB-native report: extract the best expression from the DB for a single
 -- e-class, show its canonical ID, expression, and fitness. No in-memory graph.
-run (DBReport fname fitPath ds eid ci) = do
-  -- Get canonical ID
+run (DBReport fname fitPath ds dataPath eid ci) = do
+  -- canonical id
   canonical <- liftIO $ withBackend fname $ \db -> do
     rows <- queryDb db "SELECT canonical FROM eclass WHERE eid = ?"
                       [SqlInteger (fromIntegral eid)]
     case rows of
       [[SqlInteger c]] -> pure (fromIntegral c :: Int)
-      _                 -> pure eid
+      _                -> pure eid
 
-  -- Extract expression from DB
+  -- extract expression from DB
   mTree <- liftIO $ withBackend fname $ \db -> extractBestFromDB db eid
 
-  -- Get fitness if available
+  -- fitness + theta from the dataset's fit table
   (mFit, thetaText) <- liftIO $ withBackend fitPath $ \fitDb -> do
     dsid <- Q.getOrCreateDataset fitDb ds
     rows <- queryDb fitDb
@@ -938,43 +939,60 @@ run (DBReport fname fitPath ds eid ci) = do
       [[f, d, s, th]] -> pure (Just (sqlToMaybeDouble f, sqlToMaybeDouble d, sqlToInt s), sqlToText th)
       _                -> pure (Nothing, "")
 
-  let treeStr = maybe "<extraction failed>" showExpr mTree
-      fitStr = case mFit of
-        Nothing -> "not evaluated"
-        Just (f, d, s) -> "fitness=" <> maybe "N/A" show f <> " dl=" <> maybe "N/A" show d <> " size=" <> show s
+  -- load the dataset data (from its file path) for the metrics and CI
+  mData <- liftIO $ do
+    datasets <- Prelude.mapM (flip loadDataset True) (words dataPath)
+    case datasets of
+      (((xTr, yTr, _, _), (mYErr, _), _, _) : _) -> pure $ Just (xTr, yTr, mYErr)
+      _ -> pure Nothing
 
-  -- CI computation
-  ciStr <- case (ci, mTree, mFit) of
-    (True, Just tree, Just (Just _, _, _)) -> do
-      mData <- liftIO $ do
-        datasets <- Prelude.mapM (\d -> loadDataset d True) (words ds)
-        case datasets of
-          (((xTr, yTr, _, _), (mYErr, _), _, _) : _) -> pure $ Just (xTr, yTr, mYErr)
-          _ -> pure Nothing
-      case mData of
-        Nothing -> pure ""
-        Just (xTr, yTr, mYErr) -> do
-          let theta = case parseTheta (T.unpack thetaText) of
-                []    -> VU.empty
-                (v:_) -> v
-              dist = Gaussian
-              nSamples = VU.length yTr
-              et = compileTree dist xTr yTr mYErr tree
-              stats = getStatsFromModel dist mYErr xTr yTr tree theta
-          profiles <- liftIO $ getAllProfiles Bates et theta (_stdErr stats) [] 0.05
-          let ciVals = paramCI (Profile stats profiles) nSamples theta 0.05
-              maxP = VU.length theta
-              ciHdr = intercalate "," [ "ci_param_lower_" <> show i <> ",ci_param_upper_" <> show i | i <- [0..maxP-1] ]
-              ciBody = intercalate ","
-                    $ Prelude.map (\(CI _ l h) -> show l <> "," <> show h) ciVals
-                    ++ Prelude.replicate (2 * (maxP - length ciVals)) ""
-          pure $ "\n" <> ciHdr <> "\n" <> ciBody
+  let dist = Gaussian
+      loss = NLL Gaussian
+      theta = case parseTheta (T.unpack thetaText) of [] -> VU.empty; (v:_) -> v
+      thetaStr = intercalate ", " (Prelude.map show (VU.toList theta))
+      treeStr  = maybe "<extraction failed>" showExpr mTree
+      numNodes = maybe 0 (countNodes . convertProtectedOps) mTree
+      py       = maybe "NA" showPython mTree
+      fitStr   = case mFit of
+        Nothing -> "NA"
+        Just (f, _, _) -> maybe "NA" show f
+      (mseV, r2V, nllV, mdlV) = case (mTree, mData) of
+        (Just tr, Just (x, y, e)) ->
+          let t = relabelParams tr
+          in ( mseMetric x y t theta
+             , r2Metric x y t theta
+             , nllMetric loss e x y t theta
+             , mdlMetric loss e x y theta t )
+        _ -> (0, 0, 0, 0)
+      mainRows =
+        "Info,Training,Test\n"
+        <> "Id," <> show canonical <> ",\n"
+        <> "Expr," <> treeStr <> ",\n"
+        <> "Numpy,\"" <> py <> "\",\n"
+        <> "Nodes," <> show numNodes <> ",\n"
+        <> "params," <> thetaStr <> ",\n"
+        <> "Fitness," <> fitStr <> ",\n"
+        <> "MSE," <> show mseV <> ",\n"
+        <> "R^2," <> show r2V <> ",\n"
+        <> "nll," <> show nllV <> ",\n"
+        <> "DL," <> show mdlV <> "\n"
+
+  -- CI (profile likelihood) rows appended when requested
+  ciStr <- case (ci, mTree, mData) of
+    (True, Just tr, Just (xTr, yTr, mYErr)) -> do
+      let t  = relabelParams tr
+          et = compileTree dist xTr yTr mYErr t
+          stats = getStatsFromModel dist mYErr xTr yTr t theta
+      profiles <- liftIO $ getAllProfiles Bates et theta (_stdErr stats) [] 0.05
+      let ciVals = paramCI (Profile stats profiles) (VU.length yTr) theta 0.05
+          rows = [ "ci_param_lower_" <> show i <> "," <> show l <> ","
+                 | (i, CI _ l _) <- zip [0..] ciVals ]
+              <> [ "ci_param_upper_" <> show i <> "," <> show u <> ","
+                 | (i, CI _ _ u) <- zip [0..] ciVals ]
+      pure (if null rows then "" else "\n" <> intercalate "\n" rows)
     _ -> pure ""
 
-  pure . SimpleStr $ "e-class " <> show eid
-                   <> " (canonical: " <> show canonical <> ")\n"
-                   <> treeStr <> "\n"
-                   <> fitStr <> ciStr
+  pure . SimpleStr $ mainRows <> ciStr
 
 -- | DB-native profile data: compute profile likelihood for each parameter
 -- and return the raw spline data (taus, thetas) plus pairwise contours.

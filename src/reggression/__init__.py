@@ -338,7 +338,7 @@ class Reggression():
             Whether to include profile-likelihood confidence intervals
         '''
         cistr = " with ci" if ci else ""
-        return self.runQuery(f"report {self._dbSpec()} {self.dataset_name} {n}{cistr}")
+        return self.runQuery(f"report {self._dbSpec()} {self.dataset_name} {self.dataset} {n}{cistr}")
     def optimize(self, n, ci=False):
         ''' (re)optimize e-class n
 
