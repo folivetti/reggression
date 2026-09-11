@@ -975,6 +975,11 @@ run (DBReport fname fitPath ds trainPath testPath eid ci) = do
         _ -> (0, 0, 0, 0)
       (mseTr, r2Tr, nllTr, mdlTr) = metsOf mData
       (mseTe, r2Te, nllTe, mdlTe) = metsOf mTestData
+      -- fitness == -mean(nll); fill the Test column from the test nll when present
+      fitTe = case mTestData of
+        Just (_, yTe, _) | not (null testPath) && testPath /= "-" && VU.length yTe > 0
+          -> show (- nllTe / fromIntegral (VU.length yTe))
+        _ -> ""
       fmt d = if testPath == "-" || null testPath then "" else show d
       mainRows =
         "Info,Training,Test\n"
@@ -983,7 +988,7 @@ run (DBReport fname fitPath ds trainPath testPath eid ci) = do
         <> "Numpy,\"" <> py <> "\",\n"
         <> "Nodes," <> show numNodes <> ",\n"
         <> "params," <> thetaStr <> ",\n"
-        <> "Fitness," <> fitStr <> ",\n"
+        <> "Fitness," <> fitStr <> "," <> fitTe <> "\n"
         <> "MSE," <> show mseTr <> "," <> fmt mseTe <> "\n"
         <> "R^2," <> show r2Tr <> "," <> fmt r2Te <> "\n"
         <> "nll," <> show nllTr <> "," <> fmt nllTe <> "\n"
