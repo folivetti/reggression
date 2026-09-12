@@ -77,13 +77,21 @@ class Reggression():
     testData : str
         Filename of the test set in csv format.
 
-    loss : {"MSE", "Gaussian", "Bernoulli", "Poisson"}, default="MSE"
+    loss : {"MSE", "LOG10", "MAE", "MAPE", "Gaussian", "Bernoulli", "Poisson", "LeastSquares", "Pinball"}, default="MSE"
         Loss function used to evaluate the expressions:
-        - MSE (mean squared error) should be used for regression problems.
-        - Gaussian likelihood should be used for regression problem when you want to
-          fit the error term.
-        - Bernoulli likelihood should be used for classification problem.
-        - Poisson likelihood should be used when the data distribution follows a Poisson.
+        - MSE: mean squared error (regression).
+        - LOG10: log10-scale squared error (regression, multiplicative noise).
+        - MAE: mean absolute error (regression, robust to outliers).
+        - MAPE: mean absolute percentage error (regression, scale-independent).
+        - Gaussian: Gaussian negative log-likelihood (regression, fits noise term).
+        - Bernoulli: Bernoulli negative log-likelihood (binary classification).
+        - Poisson: Poisson negative log-likelihood (count data).
+        - LeastSquares: least-squares as negative log-likelihood (regression, no noise term).
+        - Pinball: quantile/pinball loss (quantile regression). Uses `pinball_tau`.
+
+    pinball_tau : float, default=0.5
+        Quantile to minimize when `loss` is "Pinball". Must be a value
+        between 0 and 1 (exclusive).
 
     loadFrom : str, default=""
         If not empty, it will load an e-graph and resume the search.
@@ -114,10 +122,12 @@ class Reggression():
     >>> egg = PyReggression("data.csv", loadFrom="myData.egraph")
     >>> egg.top(10)
     """
-    def __init__(self, dataset, testData="", loss="MSE", loadFrom="", parseCSV="", parseParams=True, refit=False, simpleOutput=False, dataset_name="", db="", fitDb=""):
-        losses = ["MSE", "Gaussian", "Bernoulli", "Poisson", "MAPE"]
+    def __init__(self, dataset, testData="", loss="MSE", loadFrom="", parseCSV="", parseParams=True, refit=False, simpleOutput=False, dataset_name="", db="", fitDb="", pinball_tau=0.5):
+        losses = ["MSE", "LOG10", "Gaussian", "Bernoulli", "Poisson", "MAE", "MAPE", "LeastSquares", "Pinball"]
         if loss not in losses:
             raise ValueError('loss must be one of ', losses)
+        if loss == "Pinball" and (pinball_tau <= 0 or pinball_tau >= 1):
+            raise ValueError('pinball_tau must be a value between 0 and 1')
         if len(dataset) == 0:
             raise ValueError('you must provide a dataset filename')
         if not os.path.isfile(dataset):
@@ -130,6 +140,7 @@ class Reggression():
         self.dataset_name = dataset_name if dataset_name else os.path.splitext(os.path.basename(dataset))[0]
         self.testData = testData
         self.loss = loss
+        self.pinball_tau = pinball_tau
         self.loadFrom = loadFrom
         self.parseCSV = parseCSV
         self.parseParams = int(parseParams)
@@ -159,6 +170,11 @@ class Reggression():
                 os.remove(self.db)
             except OSError:
                 pass
+    @property
+    def loss_arg(self):
+        if self.loss == "Pinball":
+            return f"Pinball {self.pinball_tau}"
+        return self.loss
     def set_simple_output(self, b):
         '''
         Sets to simple output when printing a dataframe.
@@ -188,7 +204,7 @@ class Reggression():
             Whether the query returns a DataFrame.
         '''
         # DB-native: pass empty loadFrom/dumpTo (skip binary round-trip)
-        csv_data = reggression_run(query, self.dataset, self.testData, self.loss, "", "", self.parseCSV, self.parseParams, 0, 0, self.varnames)
+        csv_data = reggression_run(query, self.dataset, self.testData, self.loss_arg, "", "", self.parseCSV, self.parseParams, 0, 0, self.varnames)
         if df and len(csv_data) > 0:
             csv_io = StringIO(csv_data.strip())
             self.results = pd.read_csv(csv_io, header=0)
@@ -339,7 +355,7 @@ class Reggression():
         '''
         cistr = " with ci" if ci else ""
         test = self.testData if self.testData else "-"
-        return self.runQuery(f"report {self._dbSpec()} {self.dataset_name} {self.dataset} {test} {n}{cistr} {self.loss}")
+        return self.runQuery(f"report {self._dbSpec()} {self.dataset_name} {self.dataset} {test} {n}{cistr} {self.loss_arg}")
     def optimize(self, n, ci=False):
         ''' (re)optimize e-class n
 
@@ -351,7 +367,7 @@ class Reggression():
             Whether to include profile-likelihood confidence intervals
         '''
         cistr = " with ci" if ci else ""
-        return self.runQuery(f"optimize {self._dbSpec()} {self.dataset_name} {self.dataset} {n}{cistr} {self.loss}", df=False)
+        return self.runQuery(f"optimize {self._dbSpec()} {self.dataset_name} {self.dataset} {n}{cistr} {self.loss_arg}", df=False)
     def eqsat(self, n=1):
         ''' run n steps of equality saturation
         sequentially for each rule (see https://github.com/folivetti/srtree/blob/main/src/Algorithm/EqSat/Simplify.hs)
