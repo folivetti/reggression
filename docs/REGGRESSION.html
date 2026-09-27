@@ -1,0 +1,1009 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>rEGGression — Python Library Documentation</title>
+<style>
+  :root {
+    --bg: #ffffff;
+    --bg-secondary: #f6f8fa;
+    --text: #1f2328;
+    --text-secondary: #656d76;
+    --border: #d1d9e0;
+    --link: #0969da;
+    --code-bg: #f0f2f4;
+    --header-bg: #1f2328;
+    --header-text: #ffffff;
+    --accent: #0969da;
+    --table-header: #f6f8fa;
+    --success: #1a7f37;
+    --warning: #bf8700;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif;
+    line-height: 1.6;
+    color: var(--text);
+    background: var(--bg);
+    display: flex;
+    min-height: 100vh;
+  }
+  /* Sidebar / TOC */
+  nav.toc {
+    position: fixed;
+    top: 0; left: 0;
+    width: 280px;
+    height: 100vh;
+    overflow-y: auto;
+    background: var(--bg-secondary);
+    border-right: 1px solid var(--border);
+    padding: 20px 16px;
+    font-size: 14px;
+    z-index: 100;
+  }
+  nav.toc h2 {
+    font-size: 16px;
+    margin-bottom: 12px;
+    color: var(--text);
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 8px;
+  }
+  nav.toc ul { list-style: none; padding: 0; }
+  nav.toc li { margin: 3px 0; }
+  nav.toc a {
+    color: var(--text-secondary);
+    text-decoration: none;
+    display: block;
+    padding: 2px 0;
+    border-radius: 4px;
+    transition: color 0.15s;
+  }
+  nav.toc a:hover { color: var(--accent); }
+  nav.toc .toc-h3 { padding-left: 16px; font-size: 13px; }
+
+  /* Main content */
+  main {
+    margin-left: 280px;
+    max-width: 900px;
+    padding: 40px 48px;
+    flex: 1;
+  }
+  h1 { font-size: 32px; margin-bottom: 8px; border-bottom: 2px solid var(--border); padding-bottom: 12px; }
+  h2 { font-size: 24px; margin-top: 48px; margin-bottom: 16px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+  h3 { font-size: 20px; margin-top: 32px; margin-bottom: 12px; }
+  h4 { font-size: 16px; margin-top: 24px; margin-bottom: 8px; }
+  p { margin-bottom: 12px; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  /* Code */
+  code {
+    background: var(--code-bg);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 85%;
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  }
+  pre {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 16px;
+    overflow-x: auto;
+    margin-bottom: 16px;
+    line-height: 1.45;
+  }
+  pre code {
+    background: none;
+    padding: 0;
+    font-size: 85%;
+  }
+
+  /* Tables */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 16px;
+    font-size: 14px;
+  }
+  th, td {
+    border: 1px solid var(--border);
+    padding: 8px 12px;
+    text-align: left;
+  }
+  th { background: var(--table-header); font-weight: 600; }
+  tr:hover { background: var(--bg-secondary); }
+
+  /* Badges / tags */
+  .tag {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-size: 12px;
+    font-weight: 500;
+  }
+  .tag-yes { background: #dafbe1; color: var(--success); }
+  .tag-no { background: #fff8c5; color: var(--warning); }
+  .tag-db { background: #ddf4ff; color: var(--accent); }
+
+  /* Info boxes */
+  .note {
+    background: #ddf4ff;
+    border-left: 4px solid var(--accent);
+    padding: 12px 16px;
+    border-radius: 0 6px 6px 0;
+    margin-bottom: 16px;
+    font-size: 14px;
+  }
+  .warning {
+    background: #fff8c5;
+    border-left: 4px solid var(--warning);
+    padding: 12px 16px;
+    border-radius: 0 6px 6px 0;
+    margin-bottom: 16px;
+    font-size: 14px;
+  }
+
+  /* Method signature */
+  .signature {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 12px 16px;
+    font-family: "SFMono-Regular", Consolas, monospace;
+    font-size: 14px;
+    margin-bottom: 12px;
+    overflow-x: auto;
+  }
+
+  /* Responsive */
+  @media (max-width: 900px) {
+    nav.toc { display: none; }
+    main { margin-left: 0; padding: 20px; }
+  }
+
+  /* Scroll margin for anchor targets */
+  [id] { scroll-margin-top: 20px; }
+
+  /* Section separator */
+  hr { border: none; border-top: 1px solid var(--border); margin: 32px 0; }
+
+  /* Lists */
+  ul, ol { margin: 0 0 16px 24px; }
+  li { margin-bottom: 4px; }
+
+  /* Footer */
+  footer {
+    margin-top: 64px;
+    padding: 24px 0;
+    border-top: 1px solid var(--border);
+    font-size: 13px;
+    color: var(--text-secondary);
+  }
+</style>
+</head>
+<body>
+
+<!-- Table of Contents -->
+<nav class="toc">
+  <h2>Contents</h2>
+  <ul>
+    <li><a href="#introduction">Introduction</a></li>
+    <li><a href="#installation">Installation</a></li>
+    <li><a href="#quick-start">Quick Start</a></li>
+    <li><a href="#core-concepts">Core Concepts</a></li>
+    <li><a href="#constructor">Constructor</a></li>
+    <li><a href="#configuration">Configuration Methods</a></li>
+    <li><a href="#query-methods">Query Methods</a></li>
+    <li><a href="#top" class="toc-h3">top()</a></li>
+    <li><a href="#pareto" class="toc-h3">pareto()</a></li>
+    <li><a href="#distribution" class="toc-h3">distribution()</a></li>
+    <li><a href="#modularity" class="toc-h3">modularity()</a></li>
+    <li><a href="#countpattern" class="toc-h3">countPattern()</a></li>
+    <li><a href="#report" class="toc-h3">report()</a></li>
+    <li><a href="#optimize" class="toc-h3">optimize()</a></li>
+    <li><a href="#subtrees" class="toc-h3">subtrees()</a></li>
+    <li><a href="#getnexpressions" class="toc-h3">getNExpressions()</a></li>
+    <li><a href="#getneclasses" class="toc-h3">getNEclasses()</a></li>
+    <li><a href="#pattern-analysis">Pattern Analysis</a></li>
+    <li><a href="#extractpattern" class="toc-h3">extractPattern()</a></li>
+    <li><a href="#distributionoftokens" class="toc-h3">distributionOfTokens()</a></li>
+    <li><a href="#patternmap" class="toc-h3">patternMap()</a></li>
+    <li><a href="#eclassterminals" class="toc-h3">eclassTerminals()</a></li>
+    <li><a href="#insertion-eqsat">Insertion &amp; Eqsat</a></li>
+    <li><a href="#persistence">Persistence</a></li>
+    <li><a href="#import">Import Methods</a></li>
+    <li><a href="#db-operations">DB-Only Operations</a></li>
+    <li><a href="#visualization">Visualization</a></li>
+    <li><a href="#pattern-syntax">Pattern Syntax</a></li>
+    <li><a href="#dataset-spec">Dataset Specification</a></li>
+    <li><a href="#loss-functions">Loss Functions</a></li>
+    <li><a href="#import-formats">Import Formats</a></li>
+    <li><a href="#split-db">Split-DB Architecture</a></li>
+    <li><a href="#tutorials">Tutorials</a></li>
+    <li><a href="#mode-matrix">Method-Mode Matrix</a></li>
+    <li><a href="#citation">Citation</a></li>
+  </ul>
+</nav>
+
+<!-- Main Content -->
+<main>
+
+<h1>rEGGression — Python Library Documentation</h1>
+<p>
+  <strong>Version:</strong> 2.4.0 &nbsp;|&nbsp;
+  <strong>Author:</strong> Fabricio Olivetti de Franca &nbsp;|&nbsp;
+  <strong>Python:</strong> &ge; 3.9 (3.9&ndash;3.14) &nbsp;|&nbsp;
+  <strong>Platforms:</strong> Linux, macOS, Windows
+</p>
+
+<!-- ============================================================ -->
+<h2 id="introduction">Introduction</h2>
+
+<p>
+  rEGGression (r&#x1f95a;ression) is an interactive tool for exploring and querying symbolic regression models using <strong>e-graphs</strong> (equality graphs). It can ingest expressions from multiple symbolic regression algorithms (PySR, Operon, TIR, etc.), merge them into a single e-graph, and provide rich queries over the combined model space.
+</p>
+
+<h3>Key Features</h3>
+<ul>
+  <li><strong>Load and analyze</strong> symbolic regression models from e-graph files or SQLite databases</li>
+  <li><strong>Import expressions</strong> from various SR tools (TIR, HeuristicLab, Operon, BINGO, GP-GOMEA, PySR, SBP, EPLEX, FEAT, BRUSH)</li>
+  <li><strong>Query expressions</strong> by patterns, size, parameters, and complexity</li>
+  <li><strong>Analyze</strong> expression distributions, building blocks, and token frequencies</li>
+  <li><strong>Extract Pareto fronts</strong> of accuracy vs. expression size</li>
+  <li><strong>Equality saturation</strong> to discover equivalent expressions</li>
+  <li><strong>DB-backed mode</strong> for out-of-core operation on graphs with millions of expressions (O(1) memory)</li>
+  <li><strong>Profile-likelihood confidence intervals</strong> for fitted parameters</li>
+  <li><strong>Scikit-learn compatible API</strong> for symbolic regression</li>
+  <li><strong>Multiple loss functions</strong> for regression, classification, and quantile tasks</li>
+</ul>
+
+<h3>Quick Example</h3>
+<pre><code>from reggression import Reggression
+
+egg = Reggression(dataset="train_data.csv", loadFrom="my_models.egraph")
+
+# Get the top 10 expressions by fitness
+top_models = egg.top(10)
+
+# Find expressions containing sine
+sine_models = egg.top(5, pattern="sin(v0)")
+
+# Get the Pareto front
+pareto = egg.pareto()</code></pre>
+
+<!-- ============================================================ -->
+<h2 id="installation">Installation</h2>
+
+<h3>Requirements</h3>
+<ul>
+  <li><code>libz</code></li>
+  <li><code>libnlopt</code></li>
+  <li><code>libgmp</code></li>
+</ul>
+
+<h3>Install via pip</h3>
+<pre><code>pip install reggression</code></pre>
+
+<h3>Install from source</h3>
+<pre><code># Install system dependencies (Ubuntu/Debian)
+apt install libz libnlopt libgmp
+
+# Install Haskell toolchain via ghcup
+curl --proto '=https' --tlsv1.2 -sSf https://get-ghcup.haskell.org | sh
+
+# Build and install
+cabal build
+pip install .</code></pre>
+
+<!-- ============================================================ -->
+<h2 id="quick-start">Quick Start</h2>
+
+<h3>Example 1: Load and Query an Existing E-graph</h3>
+<pre><code>from reggression import Reggression
+
+egg = Reggression(
+    dataset="train_data.csv",
+    testData="test_data.csv",
+    loadFrom="models.egraph"
+)
+
+# Top 5 expressions by fitness
+print(egg.top(5))
+
+# Top 5 with size filter
+print(egg.top(5, filters=["size &lt; 10", "parameters &lt;= 3"]))
+
+# Pareto front
+print(egg.pareto())</code></pre>
+
+<h3>Example 2: Import from Another SR Tool</h3>
+<pre><code>from reggression import Reggression
+
+egg = Reggression(
+    dataset="train_data.csv",
+    parseCSV="operon_results.operon",  # extension determines parser
+    parseParams=True
+)
+
+print(egg.top(10))
+egg.save("merged.egraph")</code></pre>
+
+<h3>Example 3: Build from Scratch</h3>
+<pre><code>from reggression import Reggression
+
+egg = Reggression(dataset="data.csv", loss="MSE")
+
+# Insert expressions
+egg.insert("t0 * x0 + t1")
+egg.insert("sin(x0) * x1")
+
+# Run equality saturation to discover equivalences
+egg.eqsat(10)
+
+# See equivalent forms of the first expression
+print(egg.getNExpressions(0, 10))</code></pre>
+
+<h3>Example 4: DB-Only Session (Out-of-Core)</h3>
+<pre><code>from reggression import Reggression
+
+# Assumes egraph.db was created with srtree-db CLI
+egg = Reggression(
+    dataset="train_data.csv",
+    loss="Gaussian",
+    db="egraph.db",
+    fitDb="fit_train.db",
+    dataset_name="my_dataset"
+)
+
+# All queries go directly to SQLite — O(1) memory
+print(egg.top(10))
+print(egg.pareto())
+print(egg.report(42))</code></pre>
+
+<!-- ============================================================ -->
+<h2 id="core-concepts">Core Concepts</h2>
+
+<h3>E-graphs</h3>
+<p>
+  An <strong>e-graph</strong> (equality graph) is a data structure that compactly represents many equivalent expressions. When you insert <code>x0 + x1</code> and <code>(x0 + x1) * 1</code>, they are stored in the same <strong>e-class</strong> because they are semantically equivalent.
+</p>
+
+<h3>E-classes</h3>
+<p>
+  An <strong>e-class</strong> is a set of equivalent expression nodes. Each e-class has a unique integer ID. All queries (<code>top</code>, <code>pareto</code>, <code>report</code>, etc.) operate on e-class IDs.
+</p>
+
+<h3>Equality Saturation</h3>
+<p>
+  <strong>Equality saturation</strong> (eqsat) applies rewrite rules (e.g., <code>x * 1 &rarr; x</code>, <code>x + 0 &rarr; x</code>) to discover new equivalent expressions. Running eqsat on an e-graph can merge e-classes and reveal that two apparently different expressions are actually equivalent.
+</p>
+
+<h3>Fitness and Description Length</h3>
+<ul>
+  <li><strong>Fitness</strong> measures how well an expression fits the training data (higher is better for most loss functions).</li>
+  <li><strong>Description Length (DL)</strong> is a complexity measure combining model fit and complexity penalty (lower is better).</li>
+</ul>
+
+<!-- ============================================================ -->
+<h2 id="constructor">Constructor</h2>
+
+<div class="signature">
+Reggression(dataset, testData="", loss="MSE", loadFrom="", parseCSV="", parseParams=True, refit=False, simpleOutput=False, dataset_name="", db="", fitDb="", pinball_tau=0.5)
+</div>
+
+<h3>Parameters</h3>
+<table>
+  <thead><tr><th>Parameter</th><th>Type</th><th>Default</th><th>Description</th></tr></thead>
+  <tbody>
+    <tr><td><code>dataset</code></td><td>str</td><td><strong>required</strong></td><td>Path to the training dataset CSV file. Must have a header row.</td></tr>
+    <tr><td><code>testData</code></td><td>str</td><td><code>""</code></td><td>Path to the test dataset CSV. If provided, test metrics appear in <code>report()</code> and <code>top()</code>.</td></tr>
+    <tr><td><code>loss</code></td><td>str</td><td><code>"MSE"</code></td><td>Loss function. See <a href="#loss-functions">Loss Functions</a>.</td></tr>
+    <tr><td><code>loadFrom</code></td><td>str</td><td><code>""</code></td><td>Path to a binary <code>.egraph</code> file to load.</td></tr>
+    <tr><td><code>parseCSV</code></td><td>str</td><td><code>""</code></td><td>CSV file with expressions from another SR tool. Extension determines the parser format.</td></tr>
+    <tr><td><code>parseParams</code></td><td>bool</td><td><code>True</code></td><td>If <code>True</code>, extract numeric constants from expressions as parameters.</td></tr>
+    <tr><td><code>refit</code></td><td>bool</td><td><code>False</code></td><td>If <code>True</code>, re-fit all loaded expressions against the dataset.</td></tr>
+    <tr><td><code>simpleOutput</code></td><td>bool</td><td><code>False</code></td><td>If <code>True</code>, DataFrames are restricted to <code>Id</code>, <code>Latex</code>, <code>Fitness</code> columns.</td></tr>
+    <tr><td><code>dataset_name</code></td><td>str</td><td><code>""</code></td><td>Name for the dataset in DB tables. Defaults to the CSV filename stem.</td></tr>
+    <tr><td><code>db</code></td><td>str</td><td><code>""</code></td><td>Path to a SQLite e-graph database. Enables DB-only mode (O(1) memory).</td></tr>
+    <tr><td><code>fitDb</code></td><td>str</td><td><code>""</code></td><td>Path to a separate fit database (split-DB architecture).</td></tr>
+    <tr><td><code>pinball_tau</code></td><td>float</td><td><code>0.5</code></td><td>Quantile for Pinball loss. Must be between 0 and 1 (exclusive).</td></tr>
+  </tbody>
+</table>
+
+<div class="note">
+  <strong>Note:</strong> If <code>db</code> is provided, the session operates in DB-only mode. If <code>db</code> is empty, a temporary SQLite file is created and cleaned up when the object is destroyed. The <code>dataset</code> CSV is always required.
+</div>
+
+<!-- ============================================================ -->
+<h2 id="configuration">Configuration Methods</h2>
+
+<h3><code>set_simple_output(b)</code></h3>
+<p>Toggle simple output mode. When <code>True</code>, DataFrames returned by queries are restricted to columns <code>['Id', 'Latex', 'Fitness']</code>.</p>
+<pre><code>egg.set_simple_output(True)
+print(egg.top(5))  # Only Id, Latex, Fitness columns</code></pre>
+
+<h3><code>set_varnames(names)</code></h3>
+<p>Set custom variable names for display. Pass a list of strings matching the dataset column order.</p>
+<pre><code>egg.set_varnames(["temperature", "pressure", "flow_rate"])</code></pre>
+
+<!-- ============================================================ -->
+<h2 id="query-methods">Query Methods</h2>
+
+<h3 id="top"><code>top(n, filters, criteria, pattern, isRoot, negate, ci)</code></h3>
+<p>Returns the top-N expressions ranked by a criterion.</p>
+<pre><code># Top 5 by fitness
+egg.top(5)
+
+# Top 10 by description length, filtered by size
+egg.top(10, criteria="dl", filters=["size &lt; 15"])
+
+# Top 5 matching a pattern
+egg.top(5, pattern="v0 * x0")
+
+# Top 5 NOT matching a pattern
+egg.top(5, pattern="sin(v0)", negate=True)
+
+# With confidence intervals
+egg.top(5, ci=True)</code></pre>
+
+<table>
+  <thead><tr><th>Parameter</th><th>Type</th><th>Default</th><th>Description</th></tr></thead>
+  <tbody>
+    <tr><td><code>n</code></td><td>int</td><td><code>5</code></td><td>Number of expressions to return</td></tr>
+    <tr><td><code>filters</code></td><td>list[str]</td><td><code>[]</code></td><td>Filters: <code>"field op value"</code>. Fields: <code>size</code>, <code>parameters</code>, <code>cost</code>. Ops: <code>&lt;</code>, <code>&lt;=</code>, <code>=</code>, <code>&gt;=</code>, <code>&gt;</code></td></tr>
+    <tr><td><code>criteria</code></td><td>str</td><td><code>"fitness"</code></td><td>Sort by <code>"fitness"</code> (maximize) or <code>"dl"</code> (minimize)</td></tr>
+    <tr><td><code>pattern</code></td><td>str</td><td><code>""</code></td><td>Pattern expression. See <a href="#pattern-syntax">Pattern Syntax</a>.</td></tr>
+    <tr><td><code>isRoot</code></td><td>bool</td><td><code>False</code></td><td>If <code>True</code>, pattern must match at the root</td></tr>
+    <tr><td><code>negate</code></td><td>bool</td><td><code>False</code></td><td>If <code>True</code>, return expressions NOT matching the pattern</td></tr>
+    <tr><td><code>ci</code></td><td>bool</td><td><code>False</code></td><td>If <code>True</code>, include profile-likelihood confidence intervals</td></tr>
+  </tbody>
+</table>
+<p><strong>Returns:</strong> <code>pd.DataFrame</code> with columns <code>Id</code>, <code>Expression</code>, <code>Fitness</code>, <code>Size</code>, <code>DL</code>, and optionally CI columns.</p>
+
+<h3 id="pareto"><code>pareto(byFitness, ci)</code></h3>
+<p>Returns the Pareto front of accuracy vs. expression size.</p>
+<pre><code>pareto = egg.pareto()
+pareto_dl = egg.pareto(byFitness=False)</code></pre>
+
+<table>
+  <thead><tr><th>Parameter</th><th>Type</th><th>Default</th><th>Description</th></tr></thead>
+  <tbody>
+    <tr><td><code>byFitness</code></td><td>bool</td><td><code>True</code></td><td>If <code>True</code>, first objective is fitness; if <code>False</code>, uses description length</td></tr>
+    <tr><td><code>ci</code></td><td>bool</td><td><code>False</code></td><td>Include profile-likelihood confidence intervals</td></tr>
+  </tbody>
+</table>
+<p><strong>Returns:</strong> <code>pd.DataFrame</code> with Pareto-optimal expressions.</p>
+
+<h3 id="distribution"><code>distribution(filters, limitedAt, dsc, byFitness, atLeast, fromTop)</code></h3>
+<p>Returns the distribution of common structural patterns across expressions.</p>
+<pre><code>dist = egg.distribution(limitedAt=20, byFitness=False)
+dist = egg.distribution(fromTop=1000, atLeast=50)</code></pre>
+
+<table>
+  <thead><tr><th>Parameter</th><th>Type</th><th>Default</th><th>Description</th></tr></thead>
+  <tbody>
+    <tr><td><code>filters</code></td><td>list[str]</td><td><code>[]</code></td><td>Size filters (e.g., <code>["size &lt; 10"]</code>)</td></tr>
+    <tr><td><code>limitedAt</code></td><td>int</td><td><code>25</code></td><td>Max number of patterns to display</td></tr>
+    <tr><td><code>dsc</code></td><td>bool</td><td><code>True</code></td><td>Sort descending (<code>True</code>) or ascending (<code>False</code>)</td></tr>
+    <tr><td><code>byFitness</code></td><td>bool</td><td><code>True</code></td><td>Sort by average fitness or frequency</td></tr>
+    <tr><td><code>atLeast</code></td><td>int</td><td><code>1000</code></td><td>Minimum pattern frequency</td></tr>
+    <tr><td><code>fromTop</code></td><td>int</td><td><code>5000</code></td><td>Subset size (capped at 10000)</td></tr>
+  </tbody>
+</table>
+<p><strong>Returns:</strong> <code>pd.DataFrame</code> with columns <code>Pattern</code>, <code>Count</code>, <code>AvgFitness</code>.</p>
+
+<h3 id="modularity"><code>modularity(n, filters, byFitness)</code></h3>
+<p>Finds expressions with repeated sub-expressions (reusable building blocks).</p>
+<pre><code>mod = egg.modularity(10)
+mod = egg.modularity(5, filters=["&gt; 2"])</code></pre>
+
+<table>
+  <thead><tr><th>Parameter</th><th>Type</th><th>Default</th><th>Description</th></tr></thead>
+  <tbody>
+    <tr><td><code>n</code></td><td>int</td><td><strong>required</strong></td><td>Number of top equations to return (capped at 10000)</td></tr>
+    <tr><td><code>filters</code></td><td>list[str]</td><td><code>["&gt; 1"]</code></td><td>Size filters for sub-components</td></tr>
+    <tr><td><code>byFitness</code></td><td>bool</td><td><code>True</code></td><td>Sort by fitness or frequency</td></tr>
+  </tbody>
+</table>
+
+<h3 id="countpattern"><code>countPattern(pattern)</code></h3>
+<p>Counts how many expressions contain a given pattern.</p>
+<pre><code>count = egg.countPattern("sin(v0)")
+# Returns: "sin(v0) appears in 42 equations."</code></pre>
+
+<table>
+  <thead><tr><th>Parameter</th><th>Type</th><th>Description</th></tr></thead>
+  <tbody>
+    <tr><td><code>pattern</code></td><td>str</td><td>Pattern string. See <a href="#pattern-syntax">Pattern Syntax</a>.</td></tr>
+  </tbody>
+</table>
+<p><strong>Returns:</strong> <code>str</code> &mdash; human-readable count message.</p>
+
+<h3 id="report"><code>report(n, ci)</code></h3>
+<p>Detailed report of an e-class: expression, fitness, MSE, R&sup2;, NLL, DL, parameters, and optionally confidence intervals.</p>
+<pre><code>report = egg.report(42)
+report_ci = egg.report(42, ci=True)</code></pre>
+
+<table>
+  <thead><tr><th>Parameter</th><th>Type</th><th>Default</th><th>Description</th></tr></thead>
+  <tbody>
+    <tr><td><code>n</code></td><td>int</td><td><strong>required</strong></td><td>E-class ID</td></tr>
+    <tr><td><code>ci</code></td><td>bool</td><td><code>False</code></td><td>Include profile-likelihood confidence intervals</td></tr>
+  </tbody>
+</table>
+<p><strong>Returns:</strong> <code>pd.DataFrame</code> with <code>Info</code>, <code>Training</code>, <code>Test</code> columns.</p>
+
+<h3 id="optimize"><code>optimize(n, ci)</code></h3>
+<p>Re-optimize the parameters of e-class <code>n</code> using NLopt.</p>
+<pre><code>result = egg.optimize(42)</code></pre>
+
+<table>
+  <thead><tr><th>Parameter</th><th>Type</th><th>Default</th><th>Description</th></tr></thead>
+  <tbody>
+    <tr><td><code>n</code></td><td>int</td><td><strong>required</strong></td><td>E-class ID</td></tr>
+    <tr><td><code>ci</code></td><td>bool</td><td><code>False</code></td><td>Include profile-likelihood confidence intervals</td></tr>
+  </tbody>
+</table>
+
+<h3 id="subtrees"><code>subtrees(n)</code></h3>
+<p>Returns the e-class IDs of all sub-expressions in e-class <code>n</code>.</p>
+<pre><code>sub = egg.subtrees(42)  # Comma-separated string of e-class IDs</code></pre>
+
+<h3 id="getnexpressions"><code>getNExpressions(eid, n)</code></h3>
+<p>Returns up to N equivalent expressions from a single e-class.</p>
+<pre><code>exprs = egg.getNExpressions(42, 10)
+print(exprs.Expression)</code></pre>
+
+<table>
+  <thead><tr><th>Parameter</th><th>Type</th><th>Default</th><th>Description</th></tr></thead>
+  <tbody>
+    <tr><td><code>eid</code></td><td>int</td><td><strong>required</strong></td><td>E-class ID</td></tr>
+    <tr><td><code>n</code></td><td>int</td><td><code>10</code></td><td>Max number of expressions</td></tr>
+  </tbody>
+</table>
+
+<h3 id="getneclasses"><code>getNEclasses(eid, n)</code></h3>
+<p>Returns e-class ID sets for up to N expression variants from an e-class.</p>
+
+<div class="note">
+  <strong>Note:</strong> DB-only method.
+</div>
+
+<!-- ============================================================ -->
+<h2 id="pattern-analysis">Pattern Analysis Methods</h2>
+
+<h3 id="extractpattern"><code>extractPattern(eid)</code></h3>
+<p>Enumerates all structural sub-patterns found in a single expression.</p>
+<pre><code>patterns = egg.extractPattern(42)
+print(patterns)</code></pre>
+<p><strong>Returns:</strong> <code>pd.DataFrame</code> with <code>Pattern</code>, <code>Count</code> columns.</p>
+
+<h3 id="distributionoftokens"><code>distributionOfTokens(top)</code></h3>
+<p>Counts token (operator) frequencies and their average fitness.</p>
+<pre><code>tokens = egg.distributionOfTokens()
+tokens = egg.distributionOfTokens(top=100)</code></pre>
+
+<table>
+  <thead><tr><th>Parameter</th><th>Type</th><th>Default</th><th>Description</th></tr></thead>
+  <tbody>
+    <tr><td><code>top</code></td><td>int</td><td><code>-1</code></td><td>Number of top expressions to analyze. <code>-1</code> = all (capped at 10000).</td></tr>
+  </tbody>
+</table>
+<p><strong>Returns:</strong> <code>pd.DataFrame</code> with <code>Token</code>, <code>Count</code>, <code>AvgFitness</code> columns.</p>
+
+<h3 id="patternmap"><code>patternMap(pattern, limit)</code></h3>
+<p>Shows what each wildcard variable (v0, v1, ...) matched in every occurrence of a pattern, along with e-class IDs.</p>
+<pre><code>pm = egg.patternMap("v0 * v1")
+print(pm)
+#   Match  Expression      v0        v0_eid  v1        v1_eid
+# 0     0  t0 * x0         t0            3  x0            1
+# 1     1  sin(x1) * x0    sin(x1)       7  x0            1
+
+pm = egg.patternMap("v0 + v1", limit=5)</code></pre>
+
+<table>
+  <thead><tr><th>Parameter</th><th>Type</th><th>Default</th><th>Description</th></tr></thead>
+  <tbody>
+    <tr><td><code>pattern</code></td><td>str</td><td><strong>required</strong></td><td>Pattern with wildcards (e.g., <code>"v0 * v1"</code>, <code>"exp(v0) + v1"</code>)</td></tr>
+    <tr><td><code>limit</code></td><td>int</td><td><code>-1</code></td><td>Max matches to return. <code>-1</code> = all (capped at 10000).</td></tr>
+  </tbody>
+</table>
+<p><strong>Returns:</strong> <code>pd.DataFrame</code> with columns <code>Match</code>, <code>Expression</code>, <code>v0</code>, <code>v0_eid</code>, <code>v1</code>, <code>v1_eid</code>, ...</p>
+
+<h3 id="eclassterminals"><code>eclassTerminals(eid)</code></h3>
+<p>Lists all unique terminals (variables, parameters, constants) inside an e-class, with cycle detection.</p>
+<pre><code>terms = egg.eclassTerminals(42)
+print(terms)
+#    Type   Name
+# 0   Var     x0
+# 1   Var     x1
+# 2  Param    t0</code></pre>
+
+<table>
+  <thead><tr><th>Parameter</th><th>Type</th><th>Description</th></tr></thead>
+  <tbody>
+    <tr><td><code>eid</code></td><td>int</td><td>E-class ID</td></tr>
+  </tbody>
+</table>
+<p><strong>Returns:</strong> <code>pd.DataFrame</code> with <code>Type</code> (<code>"Var"</code>, <code>"Param"</code>, <code>"Const"</code>) and <code>Name</code> (<code>"x0"</code>, <code>"t1"</code>, <code>"3.14"</code>).</p>
+
+<!-- ============================================================ -->
+<h2 id="insertion-eqsat">Insertion and Equality Saturation</h2>
+
+<h3 id="insert"><code>insert(expr, alg)</code></h3>
+<p>Insert a new expression into the e-graph and optimize its parameters.</p>
+<pre><code>result = egg.insert("sin(x0) + t0 * x1")
+print(result)
+
+# Using Operon format
+result = egg.insert("sin($0) + $1 * $2", alg="OPERON")</code></pre>
+
+<table>
+  <thead><tr><th>Parameter</th><th>Type</th><th>Default</th><th>Description</th></tr></thead>
+  <tbody>
+    <tr><td><code>expr</code></td><td>str</td><td><strong>required</strong></td><td>Expression string</td></tr>
+    <tr><td><code>alg</code></td><td>str</td><td><code>"TIR"</code></td><td>Parser algorithm: <code>TIR</code>, <code>HL</code>, <code>OPERON</code>, <code>BINGO</code>, <code>GOMEA</code>, <code>PYSR</code>, <code>SBP</code>, <code>EPLEX</code>, <code>NEOGP</code></td></tr>
+  </tbody>
+</table>
+<p><strong>Returns:</strong> <code>pd.DataFrame</code> with <code>Id</code>, <code>Expression</code>, <code>Fitness</code>, <code>Size</code>.</p>
+
+<h3 id="eqsat"><code>eqsat(n)</code></h3>
+<p>Run N steps of equality saturation on the in-memory e-graph.</p>
+<pre><code>egg.eqsat(5)   # 5 iterations
+egg.eqsat(20)  # 20 iterations</code></pre>
+
+<div class="warning">
+  <strong>Warning:</strong> Can be slow and memory-intensive on large graphs. For large graphs, use <code>dbEqSat()</code> instead.
+</div>
+
+<!-- ============================================================ -->
+<h2 id="persistence">Persistence Methods</h2>
+
+<h3><code>save(fname)</code> / <code>load(fname)</code></h3>
+<p>Save or load the e-graph as a binary <code>.egraph</code> file. Aliases for <code>persist()</code> and <code>loadDB()</code>.</p>
+<pre><code>egg.save("my_models.egraph")
+egg.load("my_models.egraph")</code></pre>
+
+<h3><code>persist(fname, fitDb)</code></h3>
+<p>Save the current e-graph to a SQLite database (srtree-db format).</p>
+<pre><code>egg.persist("egraph.db")
+egg.persist("egraph.db", fitDb="fit_train.db")</code></pre>
+
+<h3><code>loadDB(fname, fitDb)</code></h3>
+<p>Load an e-graph previously persisted with <code>persist()</code> into memory.</p>
+<pre><code>egg.loadDB("egraph.db")
+egg.loadDB("egraph.db", fitDb="fit_train.db")</code></pre>
+
+<!-- ============================================================ -->
+<h2 id="import">Import Methods</h2>
+
+<h3><code>importFromCSV(fname, extractParameters)</code></h3>
+<p>Import expressions from a CSV file. The file extension determines the parser format.</p>
+<pre><code>egg.importFromCSV("results.operon")
+egg.importFromCSV("pysr_output.pysr", extractParameters=False)</code></pre>
+
+<h3><code>importDB(eqs, fname, extractParameters, fitDb)</code></h3>
+<p>Build an e-graph directly in SQLite by streaming expressions from a CSV file. No in-memory e-graph is ever built. O(1) memory for file I/O.</p>
+<pre><code>egg.importDB("expressions.tir", fname="egraph.db")
+egg.importDB("expressions.tir", fname="egraph.db", fitDb="fit.db")</code></pre>
+
+<!-- ============================================================ -->
+<h2 id="db-operations">DB-Only Operations</h2>
+
+<p>These methods operate directly on a SQLite database without loading the full e-graph into memory.</p>
+
+<h3><code>dbEqSat(fname, iterations, ruleset, fitDb)</code></h3>
+<p>Run equality saturation out-of-core against a lazily loaded (paged) e-graph in SQLite.</p>
+<pre><code>egg.dbEqSat(fname="egraph.db", iterations=20)</code></pre>
+
+<h3><code>dbEqSatFrontier(fname, iterations, ruleset, fitDb)</code></h3>
+<p>Re-saturate only the frontier (recently created/merged classes). Avoids re-working unchanged parts of the graph.</p>
+<pre><code>egg.dbEqSatFrontier(fname="egraph.db", iterations=10)</code></pre>
+
+<h3><code>dbInsert(fname, expr, alg, fitDb)</code></h3>
+<p>Insert a single expression into the DB-backed e-graph. Content-addressed (deduplicates existing subexpressions). Returns the root e-class ID.</p>
+<pre><code>eid = egg.dbInsert(fname="egraph.db", expr="sin(x0) + t0 * x1")</code></pre>
+<p><strong>Returns:</strong> <code>int</code> &mdash; the root e-class ID.</p>
+
+<h3><code>dbSetFit(fname, eid, fitness, fitDb)</code></h3>
+<p>Record the fitness of a single e-class in <code>dataset_fit</code>.</p>
+<pre><code>eid = egg.dbInsert(fname="egraph.db", expr="t0 * x0")
+egg.dbSetFit(fname="egraph.db", eid=eid, fitness=0.95)</code></pre>
+
+<h3><code>dbPushFit(fname, fitDb)</code></h3>
+<p>Write the current in-memory e-graph's fitness/DL metrics into the fit table of the SQLite DB.</p>
+
+<h3><code>dbRefreshFitness(fname, fitDb)</code></h3>
+<p>Overwrite in-memory fitness values with those stored in the SQLite DB's fit table.</p>
+
+<h3><code>dbStream(fname, op, budget, fitDb)</code></h3>
+<p>Stream the enode table by operator through a SQLite cursor. Reports total count and first <code>budget</code> matches.</p>
+
+<h3>DB-Backed eggp Loop Pattern</h3>
+<pre><code>from reggression import Reggression
+
+egg = Reggression(dataset="data.csv", db="egraph.db", dataset_name="mydata")
+
+# Insert a new expression
+eid = egg.dbInsert(fname="egraph.db", expr="sin(x0) + t0 * x1")
+
+# Re-saturate only the frontier
+egg.dbEqSatFrontier(fname="egraph.db", iterations=5)
+
+# Record fitness after evaluation
+egg.dbSetFit(fname="egraph.db", eid=eid, fitness=0.95)
+
+# Query results
+print(egg.top(10))</code></pre>
+
+<!-- ============================================================ -->
+<h2 id="visualization">Visualization</h2>
+
+<h3><code>profilePlot(eid, dataPath, dataSpec, saveTo)</code></h3>
+<p>Compute profile-likelihood data and plot tau-vs-theta curves and pairwise theta-by-theta contour plots.</p>
+<pre><code># Show plot interactively
+fig = egg.profilePlot(42)
+
+# Save to file
+fig = egg.profilePlot(42, saveTo="profile_plot.png")</code></pre>
+
+<table>
+  <thead><tr><th>Parameter</th><th>Type</th><th>Default</th><th>Description</th></tr></thead>
+  <tbody>
+    <tr><td><code>eid</code></td><td>int</td><td><strong>required</strong></td><td>E-class ID of the expression to profile</td></tr>
+    <tr><td><code>dataPath</code></td><td>str</td><td><code>None</code></td><td>Path to dataset CSV. If <code>None</code>, uses <code>self.dataset</code>.</td></tr>
+    <tr><td><code>dataSpec</code></td><td>str</td><td><code>None</code></td><td>Full data spec (e.g., <code>"file.csv:::y:0,1"</code>). Overrides <code>dataPath</code>.</td></tr>
+    <tr><td><code>saveTo</code></td><td>str</td><td><code>None</code></td><td>File path to save plot. If <code>None</code>, shows interactively.</td></tr>
+  </tbody>
+</table>
+<p><strong>Returns:</strong> <code>matplotlib.Figure</code></p>
+<p><strong>Requirements:</strong> Expression must have &ge; 2 parameters. Requires <code>matplotlib</code>.</p>
+
+<!-- ============================================================ -->
+<h2 id="pattern-syntax">Pattern Syntax</h2>
+
+<p>Patterns are mathematical expressions with special variables:</p>
+
+<table>
+  <thead><tr><th>Syntax</th><th>Meaning</th><th>Example</th></tr></thead>
+  <tbody>
+    <tr><td><code>x0</code>, <code>x1</code>, ...</td><td>Input variables (concrete)</td><td><code>x0 + x1</code></td></tr>
+    <tr><td><code>t0</code>, <code>t1</code>, ...</td><td>Numerical parameters (concrete)</td><td><code>t0 * x0</code></td></tr>
+    <tr><td><code>v0</code>, <code>v1</code>, ...</td><td>Wildcard variables (match anything)</td><td><code>v0 * x0</code></td></tr>
+  </tbody>
+</table>
+
+<h3>Supported Operators</h3>
+<p><strong>Binary:</strong> <code>+</code>, <code>-</code>, <code>*</code>, <code>/</code>, <code>^</code> (or <code>**</code>), <code>aq</code> (analytic quotient)</p>
+<p><strong>Unary:</strong> <code>sin</code>, <code>cos</code>, <code>tan</code>, <code>asin</code>, <code>acos</code>, <code>atan</code>, <code>sinh</code>, <code>cosh</code>, <code>tanh</code>, <code>asinh</code>, <code>acosh</code>, <code>atanh</code>, <code>exp</code>, <code>log</code>, <code>sqrt</code>, <code>cbrt</code>, <code>abs</code>, <code>square</code>, <code>cube</code>, <code>recip</code>, <code>logabs</code>, <code>sqrtabs</code></p>
+
+<h3>Examples</h3>
+<table>
+  <thead><tr><th>Pattern</th><th>Matches</th></tr></thead>
+  <tbody>
+    <tr><td><code>t0 * x0</code></td><td>Exactly <code>t0 * x0</code></td></tr>
+    <tr><td><code>v0 * x0</code></td><td>Any expression multiplied by <code>x0</code></td></tr>
+    <tr><td><code>v0 + v1</code></td><td>Any addition</td></tr>
+    <tr><td><code>v0 ^ v0</code></td><td>Any expression raised to itself</td></tr>
+    <tr><td><code>sin(v0)</code></td><td>Sine of any expression</td></tr>
+    <tr><td><code>exp(v0) + v1</code></td><td><code>exp</code> of something plus something else</td></tr>
+    <tr><td><code>v0 + x0 * v1^v0</code></td><td>Complex nested pattern</td></tr>
+  </tbody>
+</table>
+
+<!-- ============================================================ -->
+<h2 id="dataset-spec">Dataset Specification Format</h2>
+
+<p>The <code>dataset</code> and <code>testData</code> parameters accept a path with optional colon-separated arguments:</p>
+
+<pre><code>filename.ext:start_row:end_row:target:features</code></pre>
+
+<table>
+  <thead><tr><th>Field</th><th>Description</th><th>Example</th></tr></thead>
+  <tbody>
+    <tr><td><code>filename.ext</code></td><td>CSV/TSV file path</td><td><code>data.csv</code></td></tr>
+    <tr><td><code>start_row:end_row</code></td><td>Row range (0-indexed)</td><td><code>20:100</code></td></tr>
+    <tr><td><code>target</code></td><td>Target column name or index</td><td><code>y</code> or <code>5</code></td></tr>
+    <tr><td><code>features</code></td><td>Comma-separated feature names/indices</td><td><code>x1,x2</code> or <code>0,1,2</code></td></tr>
+  </tbody>
+</table>
+
+<h3>Examples</h3>
+<table>
+  <thead><tr><th>Spec</th><th>Description</th></tr></thead>
+  <tbody>
+    <tr><td><code>data.csv</code></td><td>Use all rows, last column as target</td></tr>
+    <tr><td><code>data.csv:20:100</code></td><td>Rows 20&ndash;99, last column as target</td></tr>
+    <tr><td><code>data.tsv:20:100:price:m2,rooms</code></td><td>Rows 20&ndash;99, <code>price</code> as target, <code>m2</code> and <code>rooms</code> as features</td></tr>
+    <tr><td><code>data.csv:::5:0,1,2</code></td><td>All rows, column 5 as target, columns 0,1,2 as features</td></tr>
+  </tbody>
+</table>
+
+<!-- ============================================================ -->
+<h2 id="loss-functions">Loss Functions</h2>
+
+<table>
+  <thead><tr><th>Loss</th><th>Use Case</th><th>Description</th></tr></thead>
+  <tbody>
+    <tr><td><code>"MSE"</code></td><td>Regression (default)</td><td>Mean squared error</td></tr>
+    <tr><td><code>"LOG10"</code></td><td>Regression, multiplicative noise</td><td>Log10-scale squared error</td></tr>
+    <tr><td><code>"MAE"</code></td><td>Regression, robust to outliers</td><td>Mean absolute error</td></tr>
+    <tr><td><code>"MAPE"</code></td><td>Regression, scale-independent</td><td>Mean absolute percentage error</td></tr>
+    <tr><td><code>"Gaussian"</code></td><td>Regression with noise estimation</td><td>Gaussian negative log-likelihood (fits noise term)</td></tr>
+    <tr><td><code>"Bernoulli"</code></td><td>Binary classification</td><td>Bernoulli negative log-likelihood</td></tr>
+    <tr><td><code>"Poisson"</code></td><td>Count data</td><td>Poisson negative log-likelihood</td></tr>
+    <tr><td><code>"LeastSquares"</code></td><td>Regression, no noise term</td><td>Least-squares as negative log-likelihood</td></tr>
+    <tr><td><code>"Pinball"</code></td><td>Quantile regression</td><td>Quantile/pinball loss. Uses <code>pinball_tau</code> parameter.</td></tr>
+  </tbody>
+</table>
+
+<!-- ============================================================ -->
+<h2 id="import-formats">Import Formats</h2>
+
+<p>The <code>parseCSV</code> parameter and <code>importFromCSV</code> method support expressions from various SR tools. The file extension determines the parser:</p>
+
+<table>
+  <thead><tr><th>Extension</th><th>Algorithm(s)</th></tr></thead>
+  <tbody>
+    <tr><td><code>.tir</code></td><td>TIR, ITEA</td></tr>
+    <tr><td><code>.hl</code></td><td>HeuristicLab</td></tr>
+    <tr><td><code>.operon</code></td><td>Operon</td></tr>
+    <tr><td><code>.bingo</code></td><td>BINGO</td></tr>
+    <tr><td><code>.gomea</code></td><td>GP-GOMEA</td></tr>
+    <tr><td><code>.pysr</code></td><td>PySR</td></tr>
+    <tr><td><code>.sbp</code></td><td>SBP</td></tr>
+    <tr><td><code>.eplex</code></td><td>EPLEX, FEAT, BRUSH</td></tr>
+  </tbody>
+</table>
+
+<p><strong>CSV format:</strong> <code>expression,parameters,fitness</code> (one expression per line). The <code>parameters</code> field is a semicolon-separated list of numeric parameter values.</p>
+
+<!-- ============================================================ -->
+<h2 id="split-db">Split-DB Architecture</h2>
+
+<p>When <code>fitDb</code> is provided, the e-graph structure and per-dataset fitness data live in separate SQLite files:</p>
+
+<table>
+  <thead><tr><th>File</th><th>Contents</th><th>Mode</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>E-graph DB</strong> (<code>db</code>)</td>
+      <td><code>enode</code>, <code>enode_child</code>, <code>eclass</code>, <code>eclass_node</code>, <code>cstore_page</code>, <code>frontier</code>, <code>meta</code></td>
+      <td>WAL mode, read-only during fitting</td>
+    </tr>
+    <tr>
+      <td><strong>Fit DB</strong> (<code>fitDb</code>)</td>
+      <td><code>dataset</code>, <code>dataset_fit</code>, <code>expression_index</code></td>
+      <td>DELETE mode, one per dataset</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>Benefits</h3>
+<ul>
+  <li>Eliminates WAL bloat during fitting</li>
+  <li>One e-graph can serve multiple datasets with independent fitness data</li>
+  <li>E-graph DB stays read-only during fitting (safe for concurrent reads)</li>
+</ul>
+
+<pre><code># Create with split-DB
+egg = Reggression(
+    "train_data.csv",
+    db="egraph.db",
+    fitDb="fit_gaussian.db",
+    dataset_name="gaussian"
+)
+
+# Multiple fit DBs for the same e-graph
+egg_gauss = Reggression("train.csv", db="egraph.db", fitDb="fit_train.db")
+egg_test  = Reggression("test.csv",  db="egraph.db", fitDb="fit_test.db")</code></pre>
+
+<!-- ============================================================ -->
+<h2 id="tutorials">Tutorials Index</h2>
+
+<table>
+  <thead><tr><th>#</th><th>File</th><th>Topic</th></tr></thead>
+  <tbody>
+    <tr><td>01</td><td><code>01_creating_egraph.py</code></td><td>Create e-graph from eggp, load and query</td></tr>
+    <tr><td>02</td><td><code>02_retrieving_top_expressions.py</code></td><td>Top-N queries with filters and criteria</td></tr>
+    <tr><td>03</td><td><code>03_retrieving_top_expressions_with_pattern_matching.py</code></td><td>Pattern matching syntax</td></tr>
+    <tr><td>04</td><td><code>04_playing_with_building_blocks.py</code></td><td>Building blocks, modularity, tokens</td></tr>
+    <tr><td>05</td><td><code>05_building_from_csv.py</code></td><td>Import from Operon/Bingo CSV, merge</td></tr>
+    <tr><td>06</td><td><code>06_starting_from_nothing.py</code></td><td>Empty e-graph, insert, eqsat, equivalence</td></tr>
+    <tr><td>07</td><td><code>07_eqsat_in_memory.py</code></td><td>In-memory eqsat, top, Pareto, equivalence</td></tr>
+    <tr><td>08</td><td><code>08_persist_and_sql_queries.py</code></td><td>Persist to SQLite, SQL queries</td></tr>
+    <tr><td>09</td><td><code>09_eqsat_on_database.py</code></td><td>Out-of-core vs in-memory RSS comparison</td></tr>
+    <tr><td>10</td><td><code>10_scale_dbEqSat.py</code></td><td>Scalability: importDB + dbEqSat at scale</td></tr>
+    <tr><td>11</td><td><code>11_eggp_db.py</code></td><td>DB-backed eggp loop, resume from DB</td></tr>
+    <tr><td>12</td><td><code>12_db_ingest.py</code></td><td>srtree-db CLI: ingest + fitdata workflow</td></tr>
+    <tr><td>13</td><td><code>13_profile_ci.py</code></td><td>Profile-likelihood confidence intervals</td></tr>
+    <tr><td>14</td><td><code>14_load_existing_db.py</code></td><td>Load pre-existing DB, query, resume</td></tr>
+    <tr><td>15</td><td><code>15_split_db_refit_status.py</code></td><td>Split-DB: multiple fit DBs, refit</td></tr>
+    <tr><td>16</td><td><code>16_pattern_map_and_terminals.py</code></td><td>Pattern wildcard mapping, e-class terminals</td></tr>
+    <tr><td>17</td><td><code>17_db_only_session.py</code></td><td>Full DB-only session (no in-memory graph)</td></tr>
+    <tr><td>18</td><td><code>18_profile_plots.py</code></td><td>Profile-likelihood CI visualization</td></tr>
+  </tbody>
+</table>
+
+<!-- ============================================================ -->
+<h2 id="mode-matrix">Method-Mode Matrix</h2>
+
+<table>
+  <thead><tr><th>Method</th><th>In-Memory</th><th>DB-Only</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td><code>top()</code></td><td><span class="tag tag-yes">Yes</span></td><td><span class="tag tag-yes">Yes</span></td><td>Auto-routes based on <code>db</code></td></tr>
+    <tr><td><code>pareto()</code></td><td><span class="tag tag-yes">Yes</span></td><td><span class="tag tag-yes">Yes</span></td><td></td></tr>
+    <tr><td><code>distribution()</code></td><td><span class="tag tag-yes">Yes</span></td><td><span class="tag tag-yes">Yes</span></td><td>DB: bounded N &le; 10000</td></tr>
+    <tr><td><code>modularity()</code></td><td><span class="tag tag-yes">Yes</span></td><td><span class="tag tag-yes">Yes</span></td><td>DB: bounded N &le; 10000</td></tr>
+    <tr><td><code>countPattern()</code></td><td><span class="tag tag-yes">Yes</span></td><td><span class="tag tag-yes">Yes</span></td><td></td></tr>
+    <tr><td><code>report()</code></td><td><span class="tag tag-yes">Yes</span></td><td><span class="tag tag-yes">Yes</span></td><td></td></tr>
+    <tr><td><code>optimize()</code></td><td><span class="tag tag-yes">Yes</span></td><td><span class="tag tag-yes">Yes</span></td><td></td></tr>
+    <tr><td><code>subtrees()</code></td><td><span class="tag tag-yes">Yes</span></td><td><span class="tag tag-yes">Yes</span></td><td></td></tr>
+    <tr><td><code>getNExpressions()</code></td><td><span class="tag tag-yes">Yes</span></td><td><span class="tag tag-yes">Yes</span></td><td></td></tr>
+    <tr><td><code>getNEclasses()</code></td><td><span class="tag tag-no">&mdash;</span></td><td><span class="tag tag-yes">Yes</span></td><td></td></tr>
+    <tr><td><code>extractPattern()</code></td><td><span class="tag tag-yes">Yes</span></td><td><span class="tag tag-yes">Yes</span></td><td>DB: bounded N &le; 10000</td></tr>
+    <tr><td><code>distributionOfTokens()</code></td><td><span class="tag tag-yes">Yes</span></td><td><span class="tag tag-yes">Yes</span></td><td>DB: bounded N &le; 10000</td></tr>
+    <tr><td><code>patternMap()</code></td><td><span class="tag tag-yes">Yes</span></td><td><span class="tag tag-yes">Yes</span></td><td>DB: bounded N &le; 10000</td></tr>
+    <tr><td><code>eclassTerminals()</code></td><td><span class="tag tag-yes">Yes</span></td><td><span class="tag tag-yes">Yes</span></td><td></td></tr>
+    <tr><td><code>eqsat()</code></td><td><span class="tag tag-yes">Yes</span></td><td><span class="tag tag-no">&mdash;</span></td><td>Use <code>dbEqSat</code> for DB</td></tr>
+    <tr><td><code>insert()</code></td><td><span class="tag tag-yes">Yes</span></td><td><span class="tag tag-yes">Yes</span></td><td>DB: content-addressed + frontier</td></tr>
+    <tr><td><code>save()</code> / <code>persist()</code></td><td><span class="tag tag-db">&rarr; DB</span></td><td><span class="tag tag-no">&mdash;</span></td><td></td></tr>
+    <tr><td><code>load()</code> / <code>loadDB()</code></td><td><span class="tag tag-db">DB &rarr;</span></td><td><span class="tag tag-no">&mdash;</span></td><td></td></tr>
+    <tr><td><code>importFromCSV()</code></td><td><span class="tag tag-yes">Yes</span></td><td><span class="tag tag-no">&mdash;</span></td><td>Use <code>importDB</code> for DB</td></tr>
+    <tr><td><code>importDB()</code></td><td><span class="tag tag-no">&mdash;</span></td><td><span class="tag tag-yes">Yes</span></td><td>Out-of-core, O(1) memory</td></tr>
+    <tr><td><code>dbEqSat()</code></td><td><span class="tag tag-no">&mdash;</span></td><td><span class="tag tag-yes">Yes</span></td><td></td></tr>
+    <tr><td><code>dbEqSatFrontier()</code></td><td><span class="tag tag-no">&mdash;</span></td><td><span class="tag tag-yes">Yes</span></td><td></td></tr>
+    <tr><td><code>dbInsert()</code></td><td><span class="tag tag-no">&mdash;</span></td><td><span class="tag tag-yes">Yes</span></td><td></td></tr>
+    <tr><td><code>dbSetFit()</code></td><td><span class="tag tag-no">&mdash;</span></td><td><span class="tag tag-yes">Yes</span></td><td></td></tr>
+    <tr><td><code>dbPushFit()</code></td><td><span class="tag tag-yes">Yes</span></td><td><span class="tag tag-no">&mdash;</span></td><td></td></tr>
+    <tr><td><code>dbRefreshFitness()</code></td><td><span class="tag tag-no">&mdash;</span></td><td><span class="tag tag-yes">Yes</span></td><td></td></tr>
+    <tr><td><code>dbStream()</code></td><td><span class="tag tag-no">&mdash;</span></td><td><span class="tag tag-yes">Yes</span></td><td>PoC</td></tr>
+    <tr><td><code>profilePlot()</code></td><td><span class="tag tag-no">&mdash;</span></td><td><span class="tag tag-yes">Yes</span></td><td>Requires matplotlib</td></tr>
+    <tr><td><code>runQuery()</code></td><td><span class="tag tag-yes">Yes</span></td><td><span class="tag tag-yes">Yes</span></td><td>Raw command passthrough</td></tr>
+  </tbody>
+</table>
+
+<!-- ============================================================ -->
+<h2 id="citation">Citation</h2>
+
+<p>If you use rEGGression in your research, please cite:</p>
+<pre><code>@inproceedings{rEGGression,
+  author    = {de Franca, Fabricio Olivetti and Kronberger, Gabriel},
+  title     = {rEGGression: an Interactive and Agnostic Tool for the
+               Exploration of Symbolic Regression Models},
+  year      = {2025},
+  isbn      = {9798400714658},
+  publisher = {Association for Computing Machinery},
+  address   = {New York, NY, USA},
+  url       = {https://doi.org/10.1145/3712256.3726385},
+  doi       = {10.1145/3712256.3726385},
+  booktitle = {Proceedings of the Genetic and Evolutionary
+               Computation Conference},
+  keywords  = {Genetic programming, Symbolic regression,
+               Equality saturation, e-graphs},
+  location  = {Malaga, Spain},
+  series    = {GECCO '25},
+  archivePrefix = {arXiv},
+  eprint    = {2501.17859},
+  primaryClass  = {cs.LG},
+}</code></pre>
+
+<hr>
+
+<footer>
+  <p>
+    <strong>Acknowledgments:</strong> The bindings were created following the example by
+    <a href="https://github.com/wenkokke/example-haskell-wheel">wenkokke</a>.
+  </p>
+  <p>
+    Fabricio Olivetti de Franca is supported by CNPq grant 301596/2022-0.<br>
+    Gabriel Kronberger is supported by the COMET project ProMetHeus (904919) via FFG.
+  </p>
+  <p>&copy; 2025 &mdash; rEGGression v2.4.0</p>
+</footer>
+
+</main>
+</body>
+</html>
