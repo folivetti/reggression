@@ -2,6 +2,10 @@
 %{
 #include "Reggression_stub.h"
 
+/* RTS options are accepted only through hs_init_with_rtsopts for a shared
+   library; declare it explicitly (RtsAPI.h) since the stub header may not. */
+extern void hs_init_with_rtsopts(int *argc, char **argv[]);
+
 char * unsafe_hs_reggression_version() {
   return hs_reggression_version();
 }
@@ -15,7 +19,7 @@ char * unsafe_hs_reggression_run(char * myCmd, char *dataset, char *testData, ch
 }
 
 void unsafe_hs_reggression_init(int argc, char **argv) {
-  hs_init(&argc, &argv);
+  hs_init_with_rtsopts(&argc, &argv);
 }
 
 void unsafe_hs_reggression_exit() {

@@ -10,7 +10,6 @@
 module Py (reggression) where
 
 import Algorithm.SRTree.Likelihoods
-import Algorithm.SRTree.Opt
 import Control.Monad.State.Strict
 
 import Algorithm.EqSat.Egraph
@@ -21,240 +20,236 @@ import Algorithm.EqSat.DB
 import Algorithm.EqSat.Simplify
 
 import qualified Data.IntMap as IM
-import Data.Massiv.Array as MA hiding (forM_, forM, Continue, convert)
-import Data.Maybe (fromJust, isNothing, isJust)
+import Data.Maybe (fromJust)
 import Data.SRTree
 import Data.SRTree.Recursion
 import Data.SRTree.Datasets
 import Data.SRTree.Eval
-import Data.SRTree.Random (randomTree)
 import Data.SRTree.Print hiding ( printExpr )
-import Options.Applicative as Opt hiding (Const, columns)
 import System.Random
-import qualified Data.HashSet as Set
-import Data.List ( sort, sortOn )
-import Data.List.Split ( splitOn )
 import qualified Data.Map as Map
 import Data.Map ( Map )
 import qualified Data.IntMap.Strict as IntMap
 import Data.Char ( toLower, toUpper )
-import Debug.Trace
-import Algorithm.EqSat (runEqSat)
 
 import Util
 import Commands
-import Data.List ( isPrefixOf, intercalate, nub )
+import Data.List ( isInfixOf )
 import Text.Read hiding (get)
-import Control.Monad ( forM, when, forM_ )
-import Data.Binary ( encode, decode )
+import Control.Monad ( when )
+import Data.Binary ( encode )
 import qualified Data.ByteString.Lazy as BS
-import Data.Maybe ( fromMaybe )
-import Text.ParseSR (SRAlgs(..), parseSR, parsePat, Output(..), showOutput)
 import qualified Data.ByteString.Char8 as B
-import qualified Data.IntSet as IntSet
-import qualified Data.Set as SSet
-import System.IO (withFile, IOMode(ReadMode)) 
 
 import Algorithm.EqSat.SearchSR hiding (io, myCost)
 import Text.Read (readMaybe)
 
-data Args = Args
-  { _dataset       :: String,
-    _testData      :: String,
-    _loss          :: Distribution,
-    _dumpTo        :: String,
-    _loadFrom      :: String,
-    _parseCSV      :: String,
-    _parseParams   :: Bool,
-    _calcDL        :: Bool,
-    _calcFit       :: Bool
-  }
-  deriving (Show)
-
-egraph :: IO a -> MyEGraph a
-egraph = Control.Monad.State.Strict.lift
-
-printFun :: [String] -> [DataSet] -> [DataSet] -> Distribution -> PrintResults -> MyEGraph String
+printFun :: [String] -> [DataSet] -> [DataSet] -> Loss -> PrintResults -> MyEGraph String
 printFun varnames _          _         _    (MultiExprs eids) = printSimpleMultiExprs varnames eids
 printFun varnames datatrains datatests loss (SingleExpr eid)  = printExpr varnames datatrains datatests loss eid
 printFun varnames _          _         _    (Counts pats)     = printMultiCounts pats
 printFun varnames _          _         _    (SimpleStr str)   = pure str
 printFun varnames _          _         _    NoPrint           = pure ""
 printFun varnames _          _         _    (MultiTrees ts)   = printSimpleMultiTrees varnames ts
-
+printFun varnames _          _         _    (MultiClass eids) = printEClasses eids
 runIfRight varnames cmd = case cmd of
                             Left err -> pure $ "wrong command format."
-                            Right c  -> run c >>= printFun varnames [] [] Gaussian
+                            Right c  -> run c >>= printFun varnames [] [] (NLL Gaussian)
 
---topCmd :: [String] -> Repl ()
-topCmd varnames []    = helpCmd ["top"]
-topCmd varnames args  = do
-  let cmd = parseCmd parseTop (B.pack $ unwords args)
-  runIfRight varnames cmd
 
---distCmd :: [String] -> Repl ()
-distCmd varnames []   = helpCmd ["distribution"]
-distCmd varnames args = do
-  let cmd = parseCmd parseDist (B.pack $ unwords args)
-  runIfRight varnames cmd
 
-modCmd varnames []   = helpCmd ["modularity"]
-modCmd varnames args = do
-  let cmd = parseCmd parseModular (B.pack $ unwords args)
-  runIfRight varnames cmd
+-- | Split a possibly colon-separated "egraph_path:fit_path" pair.
+-- If there is no colon, both paths are set to the same value (backward compat).
+splitColon :: String -> (String, String)
+splitColon s = case break (== ':') s of
+  (path, ':':fitPath) -> (path, fitPath)
+  _                   -> (s, s)
 
---reportCmd :: Distribution -> [DataSet] -> [DataSet] -> [String] -> Repl ()
-reportCmd varnames _ _ _ [] = helpCmd ["report"]
-reportCmd varnames dist trainData testData args =
-  case readMaybe @Int (head args) of
+-- | Check if a command string is DB-native (opens its own SQLite connections
+-- and does not need the in-memory EGraph state or binary round-trip).
+-- All commands are now DB-native.
+isDBCommand :: String -> Bool
+isDBCommand _ = True
+
+persistCmd varnames (fname:ds:_) = let (f, fp) = splitColon fname in run (Persist f fp ds) >>= printFun varnames [] [] (NLL Gaussian)
+persistCmd varnames _ = helpCmd ["persist"]
+
+loadCmd varnames (fname:ds:_) = let (f, fp) = splitColon fname in run (LoadDB f fp ds) >>= printFun varnames [] [] (NLL Gaussian)
+loadCmd varnames _ = helpCmd ["load"]
+
+importCmd varnames loss vars (db:eqs:ds:_) = let (f, fp) = splitColon db in run (ImportDB f fp eqs ds loss vars True) >>= printFun varnames [] [] loss
+importCmd varnames _ _ _ = helpCmd ["import"]
+
+eqSatCmd varnames (fname:ds:n:rs:_) = case readMaybe @Int n of
+                                        Nothing -> pure "The n must be an integer."
+                                        Just k  -> let (f, fp) = splitColon fname in run (DBEqSat f fp ds k rs) >>= printFun varnames [] [] (NLL Gaussian)
+eqSatCmd varnames _ = helpCmd ["eqsat"]
+
+eqSatFrontierCmd varnames (fname:ds:n:rs:_) = case readMaybe @Int n of
+                                        Nothing -> pure "The n must be an integer."
+                                        Just k  -> let (f, fp) = splitColon fname in run (DBEqSatFrontier f fp ds k rs) >>= printFun varnames [] [] (NLL Gaussian)
+eqSatFrontierCmd varnames _ = helpCmd ["eqsat-frontier"]
+
+insertCmd varnames (fname:ds:alg:args) = let (f, fp) = splitColon fname in run (DBInsert f fp ds alg (unwords args)) >>= printFun varnames [] [] (NLL Gaussian)
+insertCmd varnames _ = helpCmd ["insert"]
+
+setFitCmd varnames (fname:ds:eid:fit:_) = case (readMaybe @Int eid, readMaybe @Double fit) of
+    (Just e, Just f) -> let (fp, fp') = splitColon fname in run (DBSetFit fp fp' ds e f) >>= printFun varnames [] [] (NLL Gaussian)
+    _                -> pure "set-fit requires EID FITNESS as numbers"
+setFitCmd varnames _ = helpCmd ["set-fit"]
+
+topCmd varnames (fname:ds:n:_) = case readMaybe @Int n of
+                                    Nothing -> pure "The n must be an integer."
+                                    Just k  -> let (f, fp) = splitColon fname in run (DBTop f fp ds k varnames False Nothing) >>= printFun varnames [] [] (NLL Gaussian)
+topCmd varnames _ = helpCmd ["top"]
+
+distCmd varnames (fname:ds:n:_) = case readMaybe @Int n of
+                                    Nothing -> pure "The n must be an integer."
+                                    Just k  -> let (f, fp) = splitColon fname in run (DBDist f fp ds k) >>= printFun varnames [] [] (NLL Gaussian)
+distCmd varnames _ = helpCmd ["distribution"]
+
+countCmd varnames (fname:op:_) = let (f, fp) = splitColon fname in run (DBCount f fp op) >>= printFun varnames [] [] (NLL Gaussian)
+countCmd varnames _ = helpCmd ["count"]
+
+paretoCmd varnames (fname:ds:rest) = let (f, fp) = splitColon fname
+                                         byFitness = "by fitness" `isInfixOf` unwords rest || null rest
+                                     in run (DBPareto f fp ds False byFitness Nothing) >>= printFun varnames [] [] (NLL Gaussian)
+paretoCmd varnames _ = helpCmd ["pareto"]
+
+streamCmd varnames (fname:op:n:_) = case readMaybe @Int n of
+                                        Nothing -> pure "The n must be an integer."
+                                        Just k  -> let (f, fp) = splitColon fname in run (DBStream f fp op k) >>= printFun varnames [] [] (NLL Gaussian)
+streamCmd varnames _ = helpCmd ["stream"]
+
+pushFitCmd varnames (fname:ds:_) = let (f, fp) = splitColon fname in run (PushFit f fp ds) >>= printFun varnames [] [] (NLL Gaussian)
+pushFitCmd varnames _ = helpCmd ["push-fit"]
+
+refreshFitCmd varnames (fname:ds:_) = let (f, fp) = splitColon fname in run (RefreshFit f fp ds) >>= printFun varnames [] [] (NLL Gaussian)
+refreshFitCmd varnames _ = helpCmd ["refresh-fitness"]
+
+reportCmd varnames (fname:ds:path:testData:eid:rest) = case readMaybe @Int eid of
     Nothing -> pure "The id must be an integer."
-    Just n  -> run (Report n (dist, trainData, testData)) >>= printFun varnames trainData testData dist
+    Just n  -> let (f, fp) = splitColon fname
+                   ci = "ci" `elem` rest
+                   lossName = if null rest then "Gaussian" else head rest
+               in run (DBReport f fp ds path testData n ci lossName) >>= printFun varnames [] [] (NLL Gaussian)
+reportCmd varnames _ = helpCmd ["report"]
 
---optimizeCmd :: Distribution -> [DataSet] -> [DataSet] -> [String] -> Repl ()
-optimizeCmd varnames _ _ _ [] = helpCmd ["optimize"]
-optimizeCmd varnames dist trainData testData args =
-  case readMaybe @Int (head args) of
+optimizeCmd varnames (fname:ds:path:eid:rest) = case readMaybe @Int eid of
     Nothing -> pure "The id must be an integer."
-    Just n  -> do let nIters = if length args > 1 then fromMaybe 100 (readMaybe @Int (args !! 1)) else 100
-                  run (Optimize n nIters (dist, trainData, trainData)) >>= printFun varnames trainData testData dist
+    Just n  -> let (f, fp) = splitColon fname
+                   lossName = if null rest then "Gaussian" else head rest
+               in run (DBOptimize f fp ds path n False lossName) >>= printFun varnames [] [] (NLL Gaussian)
+optimizeCmd varnames _ = helpCmd ["optimize"]
 
-eqSatCmd varnames _ _ _ [] = helpCmd ["eqsat"]
-eqSatCmd varnames dist trainData testData (arg:_) = case readMaybe @Int arg of
-                        Nothing -> pure "The argument must be an integer."
-                        Just n  -> run (EqSatStep n (dist, trainData, trainData)) >>= printFun varnames trainData testData dist
+subtreesCmd varnames (fname:ds:eid:_) = case readMaybe @Int eid of
+    Nothing -> pure "The id must be an integer."
+    Just n  -> let (f, fp) = splitColon fname in run (DBSubtrees f fp ds n) >>= printFun varnames [] [] (NLL Gaussian)
+subtreesCmd varnames _ = helpCmd ["subtrees"]
 
-getNExprsCmd varnames (arg1:arg2:_) = case  ((,) <$> readMaybe @Int arg1 <*> readMaybe @Int arg2) of
-                                  Nothing -> pure $ "Both arguments should be an integer."
-                                  Just (n,eid) -> run (GetNExprs n eid) >>= printFun varnames [] [] Gaussian
+getNExprsCmd varnames (fname:ds:n:eid:_) = case (readMaybe @Int n, readMaybe @Int eid) of
+    (Just k, Just e) -> let (f, fp) = splitColon fname in run (DBGetNExprs f fp ds k e) >>= printFun varnames [] [] (NLL Gaussian)
+    _ -> pure "getNExprs requires N EID as integers"
 getNExprsCmd varnames _ = helpCmd ["getNExprs"]
 
---subtreesCmd :: [String] -> Repl ()
-subtreesCmd varnames [] = helpCmd ["subtrees"]
-subtreesCmd varnames (arg:_) = case readMaybe @Int arg of
-                        Nothing -> pure "The argument must be an integer."
-                        Just n  -> (run (Subtrees n) >>= printFun varnames [] [] Gaussian)
+getNEclassesCmd varnames (fname:ds:n:eid:_) = case (readMaybe @Int n, readMaybe @Int eid) of
+    (Just k, Just e) -> let (f, fp) = splitColon fname in run (DBGetNEclasses f fp ds k e) >>= printFun varnames [] [] (NLL Gaussian)
+    _ -> pure "getNEclasses requires N EID as integers"
+getNEclassesCmd varnames _ = helpCmd ["getNEclasses"]
 
---insertCmd :: Distribution -> [DataSet] -> [DataSet] -> [String] -> Repl ()
-insertCmd varnames dist trainData testData [] = helpCmd ["insert"]
-insertCmd varnames dist trainData testData args = do
-  let etree = parseSR TIR "" False $ B.pack (unwords args)
-  case etree of
-    Left _     -> pure $ "no parse for " <> unwords args
-    Right tree -> do ec <- fromTree myCost tree
-                     (run (Optimize ec 100 (dist, trainData, trainData)) >>= printFun varnames trainData testData dist)
-
---paretoCmd :: [String] -> Repl ()
-paretoCmd varnames []   = run (Pareto ByFitness) >>= printFun varnames [] [] Gaussian
-paretoCmd varnames args = case (Prelude.map toLower $ unwords args) of
-                    "by fitness" -> (run (Pareto ByFitness ) >>= printFun varnames [] [] Gaussian)
-                    "by dl"      -> (run (Pareto ByDL) >>= printFun varnames [] [] Gaussian)
-                    _            -> helpCmd ["pareto"]
-
---countPatCmd :: [String] -> Repl ()
-countPatCmd varnames []   = helpCmd ["count-pattern"]
-countPatCmd varnames args = run (CountPat (unwords args)) >>= printFun varnames [] [] Gaussian
-
---saveCmd :: [String] -> Repl ()
-saveCmd varnames [] = helpCmd ["save"]
-saveCmd varnames args = run (Save (unwords args)) >>= printFun varnames [] [] Gaussian
-
---loadCmd :: [String] -> Repl ()
-loadCmd varnames [] = helpCmd ["load"]
-loadCmd varnames args = run (Load (unwords args)) >>= printFun varnames [] [] Gaussian
-
---importCmd :: Distribution -> String -> [String] -> Repl ()
-importCmd varnames dist varnames' (fname:params:_) = run (Import fname dist varnames' (Prelude.read params)) >>= printFun varnames [] [] dist
-importCmd varnames dist varnames' _   = helpCmd ["import"]
-
-distTokensCmd varnames [] = helpCmd ["distribution-tokens"]
-distTokensCmd varnames (arg:_) = case readMaybe arg of
-                          Just n -> run (DistTokens n) >>= printFun varnames [] [] Gaussian
-                          Nothing -> helpCmd ["distribution-tokens"]
-
-extractPatCmd varnames args = case readMaybe @Int (head args) of
+eclassTerminalsCmd varnames (fname:ds:eid:_) = case readMaybe @Int eid of
     Nothing -> pure "The id must be an integer."
-    Just n  -> run (ExtractPat n) >>= printFun varnames [] [] Gaussian
+    Just n  -> let (f, fp) = splitColon fname in run (DBEClassTerminals f fp ds n) >>= printFun varnames [] [] (NLL Gaussian)
+eclassTerminalsCmd varnames _ = helpCmd ["eclass-terminals"]
 
-commands = ["help", "top", "report", "optimize", "eqsat", "getNExprs", "subtrees", "insert", "count-pattern", "distribution", "modularity", "pareto", "save", "load", "import", "extract-pattern", "distribution-tokens"]
+topPatternCmd varnames (fname:ds:n:rest) = case readMaybe @Int n of
+    Nothing -> pure "The n must be an integer."
+    Just k  -> let (f, fp) = splitColon fname
+                   -- Separate pattern from flags: "root" and "not" are flags, rest is pattern
+                   isRoot = "root" `elem` rest
+                   negate = "not" `elem` rest
+                   pat = unwords (filter (`notElem` ["root", "not"]) rest)
+               in run (DBTopPattern f fp ds k pat isRoot negate Nothing) >>= printFun varnames [] [] (NLL Gaussian)
+topPatternCmd varnames _ = helpCmd ["top-pattern"]
 
-topHlp = "top N [FILTER...] [CRITERIA] [[not] matching [root] PATTERN] \n \
-         \ \n \
-         \ FILTER: with [size|cost|parameters] [<|<=|=|>|>=] N \n \
-         \ CRITERIA: [by fitness | by dl]  \n \
-         \ \n \
-         \ where \"dl\" is the description length, \"cost\" is the default cost function \n \
-         \ and \"parameters\" refer to the number of parameters. The cost function  \n \
-         \ assigns a cost of 1 to terminals, 2 to binary operators and 3 to \n \
-         \ nonlinear functions. \n \
-         \ \n \
-         \ Example: \n \
-         \ \n \
-         \ top 10 with size <= 10 with parameters > 2 by fitness matching v0 * x0 + t0 \n \
-         \ \n \
-         \ This will return the 10 best expressions by fitness with size less than \n \
-         \ or equal to 10 and more than 2 parameters containing any sub-expression  \n \
-         \ in the format f(x) * x0 + t0. \n \
-         \ To create a pattern for matching you can use x0 .. xn to represent a variable \n \
-         \  t0 .. tn to represent a numerical parameter, and v0 .. vn to represent wildcards. \n \
-         \ Notice that v0 * x0 + v0 will pattern expressions such as (sin(t0) + x0) * x0 + (sin(t0) + x0) \n \
-         \ but not (sin(t0) + x0) * x0 + t0, since both occurrences of v0 will match the same expression. \n \
-         \ (see `help count-pattern` for more details) \
-         \ The keyword \"root\" will matches only expressions starting with this pattern."
+distributionPatternCmd varnames (fname:ds:n:_) = case readMaybe @Int n of
+    Nothing -> pure "The n must be an integer."
+    Just k  -> let (f, fp) = splitColon fname in run (DBDistribution f fp ds k) >>= printFun varnames [] [] (NLL Gaussian)
+distributionPatternCmd varnames _ = helpCmd ["distribution-pattern"]
 
-distHlp = "distribution [FILTER] [LIMIT] \n\n \
-          \ FILTER: with size [<|<=|=|>|>=] N \n \
-          \ LIMIT: limited at N [asc|dsc] \n\n \
-          \ Shows the distribution of all the patterns in the set of evaluated expressions.\n \
-          \ The list can be filtered by the size of the pattern and limited by the top most frequent (dsc) \n \
-          \ or least frequent (asc) patterns. \n\n \
-          \ See `help count-pattern` for details on the syntax of pattern."
+modularityCmd varnames (fname:ds:n:_) = case readMaybe @Int n of
+    Nothing -> pure "The n must be an integer."
+    Just k  -> let (f, fp) = splitColon fname in run (DBModularity f fp ds k) >>= printFun varnames [] [] (NLL Gaussian)
+modularityCmd varnames _ = helpCmd ["modularity"]
 
-modHlp = "modularity n [FILTER] [CRITERIA] \n\n \
-          \ FILTER: with size [<|<=|=|>|>=] N \n \
-          \ CRITERIA: [by fitness | by dl] \n\n \
-          \ Shows the top-N equations by the criteria presenting modularity \n \
-          \ (repeated pattern). The filter limits the size of the repeated pattern."
+countPatCmd varnames (fname:ds:pat:n:_) = case readMaybe @Int n of
+    Nothing -> pure "The n must be an integer."
+    Just k  -> let (f, fp) = splitColon fname in run (DBCountPat f fp ds pat k) >>= printFun varnames [] [] (NLL Gaussian)
+countPatCmd varnames _ = helpCmd ["count-pattern"]
 
-countHlp = "count-pattern PAT \n\n \
-           \ Count the number of occurrence of the pattern PAT in the e-graph. \n\n \
-           \ A pattern follows the same syntax of an expression: \n\n\
-           \ EXPR := FUN(EXPR) | EXPR OP EXPR | TERM \n\
-           \ FUN := abs | sin | cos | tan | sinh | cosh | tanh | asin | acos | atan | asinh | acosh | atanh | sqrt | sqrtabs | cbrt | square | log | logabs | exp | recip | cube \n\
-           \ OP := + | - | * | / | aq | ^ | |^| \n\
-           \ TERM := xN | tN | vN \n\n\
-           \ where: \n \
-           \ - aq is the analytical quotient (x aq y = x / sqrt(1 + y^2)) \n \
-           \ - x |^| y = abs(x) ^ y \n \
-           \ - xN is the N-th input variable \n \
-           \ - tN is the N-th numerical parameter \n \
-           \ - vN is the N-th pattern variable (see below) \n\n \
-           \ The pattern variable works as a wildcard matching any expression. \n \
-           \ If we use the same pattern variable multiple times in the expression, \n \
-           \ the pattern must be the same in every occurrence. \n\n \
-           \ Examples: \n\n \
-           \ v0 + x0 will match anything added to x0\n \
-           \ v0 + v1 * x0 will match anything added to any expression multiplied by x0. \
-           \ For example: t0 ^ 2 + exp(t1 + x1) * x0. \n \
-           \ v0 + v0 * x0 will match any expression added with this same expression multiplied by x0. \
-           \ For example: t0 ^ 2 + (t0 ^ 2) * x0."
+patternMapCmd varnames (fname:ds:rest) = case readMaybe @Int (last rest) of
+    Nothing -> helpCmd ["pattern-map"]
+    Just k  -> let (f, fp) = splitColon fname
+                   n = show k
+                   pat = unwords (init rest)
+               in run (DBPatternMap f fp ds pat k) >>= printFun varnames [] [] (NLL Gaussian)
+patternMapCmd varnames _ = helpCmd ["pattern-map"]
+
+extractPatCmd varnames (fname:ds:eid:_) = case readMaybe @Int eid of
+    Nothing -> pure "The id must be an integer."
+    Just n  -> let (f, fp) = splitColon fname in run (DBExtractPat f fp ds n) >>= printFun varnames [] [] (NLL Gaussian)
+extractPatCmd varnames _ = helpCmd ["extract-pattern"]
+
+distTokensCmd varnames (fname:ds:n:_) = case readMaybe @Int n of
+                                        Nothing -> pure "The n must be an integer."
+                                        Just k  -> let (f, fp) = splitColon fname in run (DBDistTokens f fp ds k) >>= printFun varnames [] [] (NLL Gaussian)
+distTokensCmd varnames _ = helpCmd ["distribution-tokens"]
+
+profileDataCmd varnames (fname:ds:eid:dataPath:_) = case readMaybe @Int eid of
+    Nothing -> pure "The id must be an integer."
+    Just n  -> let (f, fp) = splitColon fname in run (DBProfileData f fp ds n dataPath) >>= printFun varnames [] [] (NLL Gaussian)
+profileDataCmd varnames _ = helpCmd ["profile-data"]
+
+commands = ["help", "top", "distribution", "distribution-pattern", "count", "modularity", "pareto", "report", "optimize", "eqsat", "eqsat-frontier", "insert", "set-fit", "stream", "push-fit", "refresh-fitness", "subtrees", "getNExprs", "getNEclasses", "eclass-terminals", "top-pattern", "count-pattern", "pattern-map", "extract-pattern", "distribution-tokens", "profile-data", "load", "import", "persist"]
+
+topHlp = "top FILE DATASET N [with ci]: top-N e-classes by fitness from the SQLite database FILE."
+
+distHlp = "distribution FILE DATASET N: number of evaluated e-classes per model size (size <= N) from the SQLite database FILE."
+
+modHlp = "modularity FILE DATASET N: find reusable sub-components in top-N expressions from the SQLite database FILE."
+
+countHlp = "count FILE OP: number of e-classes containing an e-node with operator OP (e.g. EAdd, EMul, LogAbs) from the SQLite database FILE."
 
 hlpMap = Map.fromList $ Prelude.zip commands
                             [ "help <cmd>: shows a brief explanation for the command."
-                            , topHlp
-                            , "report N: displays a detailed report for the expression with id N."
-                            , "optimize N: (re)optimize expression with id N."
-                            , "eqsat: run a single step of equality saturation and refit any expression with changed number of parameters."
-                            , "getNExprs N id: get N equivalent expressions rooted at id."
-                            , "subtrees N: shows the subtrees for the tree rotted with id N."
-                            , "insert EXPR: inserts a new expression EXPR and evaluates."
-                            , countHlp
-                            , distHlp
-                            , modHlp
-                            , "pareto [by fitness| by dl]: shows the pareto front where the first objective is the criteria (default: fitness) and the second objective is model size."
-                            , "save FILE: save current e-graph to a file named FILE."
-                            , "load FILE: load current e-graph from a file named FILE."
-                            , "displays the disbution of tokens"
-                            , "extract the patterns from a single expression"
+                            , "top FILE DATASET N [with ci]: top-N e-classes by fitness from the SQLite database FILE."
+                            , "distribution FILE DATASET N: number of evaluated e-classes per model size (size <= N) from the SQLite database FILE."
+                            , "distribution-pattern FILE DATASET N: pattern enumeration over top-N expressions from the SQLite database FILE."
+                            , "count FILE OP: number of e-classes containing an e-node with operator OP (e.g. EAdd, EMul, LogAbs) from the SQLite database FILE."
+                            , "modularity FILE DATASET N: find reusable sub-components in top-N expressions from the SQLite database FILE."
+                            , "pareto FILE DATASET: Pareto front over (fitness, size) from the SQLite database FILE."
+                            , "report FILE DATASET N: display a detailed report for e-class N from the SQLite database FILE."
+                            , "optimize FILE DATASET N: (re)optimize e-class N using NLopt, write fitness back to the SQLite database FILE."
+                            , "eqsat FILE DATASET ITER [RULES]: run ITER equality-saturation iterations out-of-core against the lazily loaded e-graph in SQLite FILE."
+                            , "eqsat-frontier FILE DATASET ITER [RULES]: re-saturate only the frontier of a lazily loaded e-graph in SQLite FILE."
+                            , "insert FILE DATASET EXPR: insert a single expression into the DB-backed e-graph in FILE."
+                            , "set-fit FILE DATASET EID FITNESS: record the fitness of e-class EID in the fit database."
+                            , "stream FILE OP N: stream the enode table by operator through a SQLite cursor, report count and first N matches."
+                            , "push-fit FILE DATASET: write fitness/DL metrics into the fit table of the SQLite database FILE."
+                            , "refresh-fitness FILE DATASET: overwrite in-memory fitness values with those stored in the fit table of the SQLite database FILE."
+                            , "subtrees FILE DATASET N: list all e-class IDs in the best expression tree rooted at N from the SQLite database FILE."
+                            , "getNExprs FILE DATASET N EID: get up to N equivalent expressions from e-class EID in the SQLite database FILE."
+                            , "getNEclasses FILE DATASET N EID: get e-class ID sets for up to N expression variants from EID in the SQLite database FILE."
+                            , "eclass-terminals FILE DATASET EID: list all unique terminals inside e-class EID from the SQLite database FILE."
+                            , "top-pattern FILE DATASET N PATTERN [root] [not]: top-N expressions matching PATTERN, with wildcard bindings (v0, v1, ...)."
+                            , "count-pattern FILE DATASET PATTERN N: count structural pattern matches in top-N expressions from the SQLite database FILE."
+                            , "pattern-map FILE DATASET PATTERN N: show wildcard bindings (v0, v1, ...) for each match of PATTERN in top-N expressions."
+                            , "extract-pattern FILE DATASET EID: enumerate patterns in a single expression from the SQLite database FILE."
+                            , "distribution-tokens FILE DATASET N: count token frequencies in top-N expressions from the SQLite database FILE."
+                            , "profile-data FILE DATASET EID DATAFILE: compute profile-likelihood data (taus, thetas, contours) for e-class EID using DATAFILE."
+                            , "load FILE: load an e-graph previously persisted in the SQLite database FILE."
+                            , "import DBFILE EXPRS: build an e-graph out-of-core directly in the SQLite database DBFILE by streaming the expressions in EXPRS."
+                            , "persist FILE: save the current e-graph to the SQLite database FILE."
                             ]
 
 -- Evaluation
@@ -266,61 +261,46 @@ cmd cmdMap input = do let (cmd':args) = words input
 
 helpCmd xs = pure $ hlpMap Map.! (head xs)
 
-reggression myCmd dataset testData loss' loadFrom dumpTo parseCSV' parseParams calcDL calcFit varnames = do
-  let loss        = fromJust $ readMaybe loss'
-      args = Args dataset testData loss dumpTo loadFrom parseCSV' parseParams calcDL calcFit
+reggression myCmd dataset testData loss' loadFrom dumpTo parseCSV' parseParams calcDL calcFit varnames =
+  reggressionDB myCmd dataset loss' varnames
 
-  g <- getStdGen
-  let datasets = words (_dataset args)
-  dataTrainsWP' <- Prelude.mapM (flip loadDataset True) datasets
-  let dataTrainsWP = Prelude.map (\((a, b, _, _), (c, _), v, _) -> ((a,b,c), v)) dataTrainsWP'
-
-  let dataTrains = Prelude.map fst dataTrainsWP
-      varnames'  = snd . head $ dataTrainsWP
-
-  dataTests  <- if null (_testData args)
-                  then pure dataTrains
-                  else (Prelude.mapM (flip loadTrainingOnly True) $ words (_testData args))
-  eg <- if (not.null) (_loadFrom args)
-           then withFile (_loadFrom args) ReadMode  \h -> do
-                        bs <- BS.hGetContents h
-                        BS.length bs `seq` pure (decode bs)
-           else if (not. null) (_parseCSV args)
-                 then parseCSV (_loss args) (_parseCSV args) varnames' (_parseParams args)
-                 else pure emptyGraph
-  let loss = _loss args
+-- | DB-native path: no binary load/dump, no in-memory EGraph.
+-- Commands open their own SQLite connections inside 'run'.
+reggressionDB :: String -> String -> String -> [String] -> IO String
+reggressionDB myCmd dataset lossStr varnames = do
+  let loss = fromJust $ readLoss lossStr
       funs = [ helpCmd
              , topCmd varnames
-             , reportCmd varnames loss dataTrains dataTests
-             , optimizeCmd varnames loss dataTrains dataTests
-             , eqSatCmd varnames loss dataTrains dataTests
-             , getNExprsCmd varnames
-             , subtreesCmd varnames
-             , insertCmd varnames loss dataTrains dataTests
-             , countPatCmd varnames
              , distCmd varnames
-             , modCmd varnames
+             , distributionPatternCmd varnames
+             , countCmd varnames
+             , modularityCmd varnames
              , paretoCmd varnames
-             , saveCmd varnames
-             , loadCmd varnames
-             , importCmd varnames loss varnames'
+             , reportCmd varnames
+             , optimizeCmd varnames
+             , eqSatCmd varnames
+             , eqSatFrontierCmd varnames
+             , insertCmd varnames
+             , setFitCmd varnames
+             , streamCmd varnames
+             , pushFitCmd varnames
+             , refreshFitCmd varnames
+             , subtreesCmd varnames
+             , getNExprsCmd varnames
+             , getNEclassesCmd varnames
+             , eclassTerminalsCmd varnames
+             , topPatternCmd varnames
+             , countPatCmd varnames
+             , patternMapCmd varnames
              , extractPatCmd varnames
              , distTokensCmd varnames
+             , profileDataCmd varnames
+             , loadCmd varnames
+             , importCmd varnames loss []
+             , persistCmd varnames
              ]
       cmdMap = Map.fromList $ Prelude.zip commands funs
+  evalStateT (cmd cmdMap myCmd) emptyGraph
 
-      repl = cmd cmdMap myCmd
-      crRun :: MyEGraph String
-      crRun = do createDBBest
-                 if _calcFit args
-                    then fillFit loss dataTrains
-                    else if _calcDL args
-                           then fillDL loss dataTrains
-                           else pure ()
-                 rebuildAllRanges
-                 output <- repl
-                 when ((not.null) (_dumpTo args)) $ do eg <- get
-                                                       io $ BS.writeFile (_dumpTo args) (encode eg)
-                 pure output
-  evalStateT crRun eg
+-- | Legacy path removed — all commands are now DB-native.
 

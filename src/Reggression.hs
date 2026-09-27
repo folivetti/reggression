@@ -10,7 +10,6 @@
 module Reggression where
 
 import Algorithm.SRTree.Likelihoods
-import Algorithm.SRTree.Opt
 import Control.Monad.State.Strict
 
 import Algorithm.EqSat.Egraph
@@ -21,7 +20,6 @@ import Algorithm.EqSat.DB
 import Algorithm.EqSat.Simplify
 
 import qualified Data.IntMap as IM
-import Data.Massiv.Array as MA hiding (forM_, forM, Continue, convert)
 import Data.Maybe (fromJust, isNothing, isJust)
 import Data.SRTree
 import Data.SRTree.Recursion
@@ -38,7 +36,6 @@ import qualified Data.Map as Map
 import Data.Map ( Map )
 import qualified Data.IntMap.Strict as IntMap
 import Data.Char ( toLower, toUpper )
-import Debug.Trace
 import Algorithm.EqSat (runEqSat)
 
 import Util
@@ -49,7 +46,7 @@ import Control.Monad ( forM, when, forM_ )
 import Data.Binary ( encode, decode )
 import qualified Data.ByteString.Lazy as BS
 import Data.Maybe ( fromMaybe )
-import Text.ParseSR (SRAlgs(..), parseSR, parsePat, Output(..), showOutput)
+import Text.ParseSR (SRAlgs(..), parseSR, Output(..), showOutput)
 import qualified Data.ByteString.Char8 as B
 import qualified Data.IntSet as IntSet
 import qualified Data.Set as SSet
