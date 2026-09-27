@@ -178,7 +178,7 @@ jobs:
         # Required to build aarch64 wheels.
         if: matrix.job.os.name == 'Linux' && matrix.job.os.arch == 'aarch64'
         name: Set up QEMU (linux/aarch64)
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@v4
         with:
           platforms: "arm64"
 
@@ -186,11 +186,11 @@ jobs:
         # Required to build i686 wheels.
         if: matrix.job.os.name == 'Linux' && matrix.job.os.arch == 'i686'
         name: Set up QEMU (linux/i686)
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@v4
         with:
           platforms: "386"
 
-      - uses: pypa/cibuildwheel@v3.2.1
+      - uses: pypa/cibuildwheel@v4.0.0
         with:
           output-dir: "./wheelhouse"
           config-file: "{package}/pyproject.toml"
@@ -229,7 +229,7 @@ jobs:
           python -m build --sdist --outdir ./wheelhouse
 
       - name: Upload wheels
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: "wheelhouse-${{ matrix.job.os.plat }}-${{ matrix.job.os.arch }}"
           path: |
