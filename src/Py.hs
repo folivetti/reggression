@@ -44,6 +44,20 @@ import qualified Data.ByteString.Char8 as B
 import Algorithm.EqSat.SearchSR hiding (io, myCost)
 import Text.Read (readMaybe)
 
+-- | Extract bracket-enclosed filter strings from a list of words.
+-- \"words\" splits \"[size = 5]\" into [\"[size\", \"=\", \"5]\"].
+-- This rejoins and extracts the [...] tokens as raw filter strings.
+parseFiltersFromArgs :: [String] -> [String]
+parseFiltersFromArgs [] = []
+parseFiltersFromArgs ws =
+  let rejoined = unwords ws
+      go ('[' : rest) = case break (== ']') rest of
+                          (content, ']':rest') -> (filter (/= ' ') content) : go rest'
+                          _                   -> []
+      go (_ : rest) = go rest
+      go []         = []
+  in go rejoined
+
 printFun :: [String] -> [DataSet] -> [DataSet] -> Loss -> PrintResults -> MyEGraph String
 printFun varnames _          _         _    (MultiExprs eids) = printSimpleMultiExprs varnames eids
 printFun varnames datatrains datatests loss (SingleExpr eid)  = printExpr varnames datatrains datatests loss eid
@@ -98,9 +112,11 @@ setFitCmd varnames (fname:ds:eid:fit:_) = case (readMaybe @Int eid, readMaybe @D
     _                -> pure "set-fit requires EID FITNESS as numbers"
 setFitCmd varnames _ = helpCmd ["set-fit"]
 
-topCmd varnames (fname:ds:n:_) = case readMaybe @Int n of
+topCmd varnames (fname:ds:n:rest) = case readMaybe @Int n of
                                     Nothing -> pure "The n must be an integer."
-                                    Just k  -> let (f, fp) = splitColon fname in run (DBTop f fp ds k varnames False Nothing) >>= printFun varnames [] [] (NLL Gaussian)
+                                    Just k  -> let (f, fp) = splitColon fname
+                                                   rawFilters = parseFiltersFromArgs rest
+                                               in run (DBTop f fp ds k varnames rawFilters False Nothing) >>= printFun varnames [] [] (NLL Gaussian)
 topCmd varnames _ = helpCmd ["top"]
 
 distCmd varnames (fname:ds:n:_) = case readMaybe @Int n of

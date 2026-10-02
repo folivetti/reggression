@@ -264,7 +264,8 @@ class Reggression():
 
         if not pattern:
             cistr = " with ci" if ci else ""
-            query = f"top {self._dbSpec()} {self.dataset_name} {n}{cistr}"
+            filterStr = " " + " ".join(f"[{f}]" for f in filters) if filters else ""
+            query = f"top {self._dbSpec()} {self.dataset_name} {n}{filterStr}{cistr}"
             return self.runQuery(query)
         else:
             rootStr = " root" if isRoot else ""

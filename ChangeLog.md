@@ -25,6 +25,16 @@
 - Fixed `egg.insert` crash on empty DB: defensive `putEOL` + default temp DB
 - Fixed issue #38
 
+### Profile-Data / Prediction Intervals
+
+- **`profile-data`/`profilePlot`**: smooth 50-point grid profile
+  (`gridProfileCSV`) with adaptive range, replacing the sparse per-parameter
+  walk output
+- **Profile-likelihood prediction interval**: for single-variable models,
+  `predictionCI` in PROFILE mode (with Laplace fallback) builds a prediction
+  interval for new observations using the residual sigma; a `usedProfile` /
+  method marker reports which method was used
+
 ### Dependencies
 
 - Updated dependency: srtree >= 3.0.0.4, srtree-db >= 0.1.3.0
