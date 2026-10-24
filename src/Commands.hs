@@ -46,7 +46,7 @@ import Statistics.Distribution.FDistribution ( fDistribution )
 import Statistics.Distribution.StudentT ( studentT )
 import System.IO.Unsafe (unsafePerformIO)
 import Algorithm.SRTree.Likelihoods
-import Algorithm.SRTree.ConfidenceIntervals (CIType(..), PType(..), paramCI, getAllProfiles, getStatsFromModel, predictionCI, getProfile, CI(..), BasicStats(..), getCol, approximateContour, ProfileT(..))
+import Algorithm.SRTree.ConfidenceIntervals (CIType(..), PType(..), paramCI, getAllProfiles, getStatsFromModel, predictionCI, getProfile, CI(..), BasicStats(..), getCol, approximateContour, ProfileT(..), maxParamOf, distExtraParams)
 import Algorithm.SRTree.Compile (compileTree, EvalTree(..))
 import Algorithm.SRTree.NonlinearOpt (minimizeNLL)
 import Algorithm.SRTree.AD (ADBackEnd(..))
@@ -98,12 +98,12 @@ data Command  = Top Int Filter Criteria PatStr Bool
               | Load String
               | Persist String String String
               | LoadDB String String String
-              | DBTop String String String Int [String] [String] Bool (Maybe String)
-                  -- fname fitPath ds n varnames filters ci mData
+              | DBTop String String String Int [String] [String] Bool (Maybe String) Loss
+                  -- fname fitPath ds n varnames filters ci mData loss
               | DBDist String String String Int
               | DBCount String String String
-                | DBPareto String String String Bool Bool (Maybe String)
-                  -- fname fitPath ds ci byFitness mData
+                | DBPareto String String String Bool Bool (Maybe String) Loss
+                  -- fname fitPath ds ci byFitness mData loss
                 | PushFit String String String
                 | RefreshFit String String String
                 | DBEqSat String String String Int String
@@ -117,15 +117,16 @@ data Command  = Top Int Filter Criteria PatStr Bool
                 | DBGetNExprs String String String Int Int        -- fname _fitPath ds n eid
                 | DBGetNEclasses String String String Int Int     -- fname _fitPath ds n eid
                 | DBEClassTerminals String String String Int      -- fname _fitPath ds eid
-                | DBTopPattern String String String Int String Bool Bool (Maybe String)
-                  -- fname fitPath ds n pattern isRoot negate ci
+                | DBTopPattern String String String Int String Bool Bool (Maybe String) Loss
+                  -- fname fitPath ds n pattern isRoot negate ci loss
                 | DBDistribution String String String Int   -- fname fitPath ds n (top-N bounded)
                 | DBModularity String String String Int     -- fname fitPath ds n
                 | DBCountPat String String String String Int -- fname fitPath ds pattern n
                 | DBPatternMap String String String String Int -- fname fitPath ds pattern n
                 | DBExtractPat String String String Int     -- fname fitPath ds eid
                 | DBDistTokens String String String Int     -- fname fitPath ds n
-                | DBProfileData String String String Int String  -- fname fitPath ds eid dataPath
+                | DBProfileData String String String Int String Loss  -- fname fitPath ds eid dataPath loss
+                | DBPredictionData String String String Int String Loss -- fname fitPath ds eid dataPath loss
                | ImportDB String String String String Loss String Bool
                | Import String Loss String Bool
               | EqSatStep Int ArgOpt
@@ -222,116 +223,6 @@ parseEClassTerminals = EClassTerminals <$> decimal
 parseLeast = stringCI "with at least " >> decimal 
 parseTopDist = stringCI "from top " >> decimal 
 
--- * SQLite-backed commands (srtree-db)
--- filename must not contain whitespace
-parseFname = takeWhile1 (\c -> c /= ' ' && c /= '\n')
-
--- | Parse a possibly colon-separated "egraph_path:fit_path" pair.
--- If there is no colon, both paths are set to the same value (backward compat).
-parseSplitFname :: Parser (String, String)
-parseSplitFname = do
-  raw <- B.unpack <$> parseFname
-  case break (== ':') raw of
-    (path, ':':fitPath) -> do
-      pure (path, fitPath)
-    _                   -> pure (raw, raw)
-
-parsePersist = string "persist " >>= \_ -> do
-  (fname, fitPath) <- parseSplitFname
-  stripSp
-  ds <- B.unpack <$> parseFname
-  pure (Persist fname fitPath ds)
-parseLoadDB = string "load " >>= \_ -> do
-  (fname, fitPath) <- parseSplitFname
-  stripSp
-  ds <- B.unpack <$> parseFname
-  pure (LoadDB fname fitPath ds)
-parseDBTop   = string "top " >>= \_ -> do
-  (fname, fitPath) <- parseSplitFname
-  stripSp
-  ds <- B.unpack <$> parseFname
-  stripSp
-  n <- decimal
-  stripSp
-  filters <- many' parseDBFilter
-  stripSp
-  ci <- parseWithCI
-  mData <- if ci
-           then do stripSp
-                   optional (string "data" >> stripSp >> fmap B.unpack parseFname)
-           else pure Nothing
-  pure (DBTop fname fitPath ds n ["x"] filters ci mData)
-parseDBDist  = string "distribution " >>= \_ -> do
-  (fname, fitPath) <- parseSplitFname
-  stripSp
-  ds <- B.unpack <$> parseFname
-  stripSp
-  n <- decimal
-  pure (DBDist fname fitPath ds n)
-parseDBCount = string "count " >>= \_ -> do
-  (fname, fitPath) <- parseSplitFname
-  stripSp
-  op <- B.unpack <$> parseFname
-  pure (DBCount fname fitPath op)
-parseDBPareto = string "pareto " >>= \_ -> do
-  (fname, fitPath) <- parseSplitFname
-  stripSp
-  ds <- B.unpack <$> parseFname
-  stripSp
-  ci <- parseWithCI
-  mData <- if ci
-           then do stripSp
-                   optional (string "data" >> stripSp >> fmap B.unpack parseFname)
-           else pure Nothing
-  stripSp
-  byFitness <- option True (do string "by dl"; pure False)
-  pure (DBPareto fname fitPath ds ci byFitness mData)
-parsePushFit = string "push-fit " >>= \_ -> do
-  (fname, fitPath) <- parseSplitFname
-  stripSp
-  ds <- B.unpack <$> parseFname
-  pure (PushFit fname fitPath ds)
-parseRefreshFit = string "refresh-fitness " >>= \_ -> do
-  (fname, fitPath) <- parseSplitFname
-  stripSp
-  ds <- B.unpack <$> parseFname
-  pure (RefreshFit fname fitPath ds)
-parseDBEqSat = string "eqsat " >>= \_ -> do
-  (fname, fitPath) <- parseSplitFname
-  stripSp
-  ds <- B.unpack <$> parseFname
-  stripSp
-  n <- decimal
-  stripSp
-  rs <- option "" (B.unpack <$> parseFname)
-  pure (DBEqSat fname fitPath ds n rs)
-parseDBEqSatFrontier = string "eqsat-frontier " >>= \_ -> do
-  (fname, fitPath) <- parseSplitFname
-  stripSp
-  ds <- B.unpack <$> parseFname
-  stripSp
-  n <- decimal
-  stripSp
-  rs <- option "" (B.unpack <$> parseFname)
-  pure (DBEqSatFrontier fname fitPath ds n rs)
-parseDBInsert = string "insert " >>= \_ -> do
-  (fname, fitPath) <- parseSplitFname
-  stripSp
-  ds <- B.unpack <$> parseFname
-  stripSp
-  alg <- B.unpack <$> parseFname
-  stripSp
-  expr <- B.unpack . B.pack <$> manyTill anyChar endOfInput
-  pure (DBInsert fname fitPath ds alg expr)
-parseDBSetFit = string "set-fit " >>= \_ -> do
-  (fname, fitPath) <- parseSplitFname
-  stripSp
-  ds <- B.unpack <$> parseFname
-  stripSp
-  eid <- decimal
-  stripSp
-  fit <- double
-  pure (DBSetFit fname fitPath ds eid fit)
 parseCriteriaDL = (stringCI "by count" >> pure ByCount)
               <|> (stringCI "by fitness" >> pure ByAvgFit)
 
@@ -365,14 +256,7 @@ parseLT  = string "<"  >> pure (<)
 parseLEQ = string "<=" >> pure (<=)
 parseEQ  = string "="  >> pure (==)
 parseGEQ = string ">="  >> pure (>=)
-parseGT  = string ">" >> pure (>)
-
-parseDBFilter = do
-  char '['
-  content <- B.unpack <$> takeWhile1 (/= ']')
-  char ']'
-  stripSp
-  pure (filter (/= ' ') content)
+parseGT = string ">" >> pure (>)
 
 -- | Parse a raw filter string like \"size=5\" or \"parameters>2\" into
 -- (field, op, value).  Returns Nothing on parse failure.
@@ -500,18 +384,6 @@ run :: Command -> MyEGraph PrintResults
 -- | Grid-scan profile for a single parameter.
 -- For each grid point, fixes the parameter and re-optimizes nuisance params.
 -- Returns (taus, thetas_cols, optTh) where thetas_cols is a list of columns.
--- | Highest variable index used by a tree (-1 if none). Used to decide whether
--- a model is single-variable (only x0) so we can build a prediction interval.
-maxVarIdx :: Fix SRTree -> Int
-maxVarIdx = foldr max 0 . cata alg
-  where
-    alg (Var ix)    = [ix]
-    alg (Param _)   = []
-    alg (Const _)   = []
-    alg (Uni _ t)   = t
-    alg (Bin _ l r) = l ++ r
-    alg (Y _)       = []
-
 -- | Smooth grid-based profile for a single parameter.
 -- The theta span is expanded adaptively until |tau| reaches ``tauMax`` at the
 -- edges (so the 95% CI at |tau|<=1.96 is always covered and the curve's
@@ -525,10 +397,18 @@ gridProfileCSV k et mle se ix = map row [0 .. nPts - 1]
     se_ix  = let s = se VU.! ix in if abs s < 1e-12 then 0.05 else s
     nllOpt = ctNLL et mle
 
+    -- dist-aware profile statistic (same as Algorithm.SRTree.ConfidenceIntervals.getProfile):
+    -- LeastSquares profiles n*log(MSE/MSE_opt); NLL losses profile 2*(nll - nll_opt).
+    nRows = fromIntegral (ctRows et) :: Double
+    tauOf nllc = case ctDist et of
+      LeastSquares -> let r = max nllc 1e-30 / max nllOpt 1e-30
+                      in sqrt (max 0 (nRows * log r))
+      _            -> sqrt (max 0 (2 * nllc - 2 * nllOpt))
+
     tauAt thv = let th     = mle VU.// [(ix, thv)]
                     th_opt = ctOptimizerFixed et ix th
                     nllc   = ctNLL et th_opt
-                in signum (thv - mle_ix) * sqrt (max 0 (2 * nllc - 2 * nllOpt))
+                in signum (thv - mle_ix) * tauOf nllc
 
     tauMax = 2.0
     fitHalf h
@@ -543,7 +423,7 @@ gridProfileCSV k et mle se ix = map row [0 .. nPts - 1]
     row i = let thv    = lo + fromIntegral i * dth
                 th_opt = ctOptimizerFixed et ix (mle VU.// [(ix, thv)])
                 nllc   = ctNLL et th_opt
-                tau    = signum (thv - mle_ix) * sqrt (max 0 (2 * nllc - 2 * nllOpt))
+                tau    = signum (thv - mle_ix) * tauOf nllc
             in show ix <> "," <> show tau <> ","
                <> intercalate "," [ show (th_opt VU.! c) | c <- [0 .. k - 1] ]
                <> "," <> show mle_ix
@@ -558,19 +438,25 @@ gridProfileCSV k et mle se ix = map row [0 .. nPts - 1]
 -- Returns ``(usedProfile, rows)`` where ``usedProfile`` tells which method was
 -- actually used. Rows: ``x0,yhat,lower,upper``.
 predictionCSV :: Distribution -> Maybe Target -> Columns -> Target -> Fix SRTree
-              -> Target -> BasicStats -> [ProfileT] -> Double -> Target -> (Bool, [String])
-predictionCSV dist mYErr xTr yTr tree theta stats profiles sigma xvals =
-  (usedProfile,
-   [ show (xvals VU.! i) <> "," <> show yh <> "," <> show low' <> "," <> show hi'
+              -> Target -> BasicStats -> [ProfileT] -> Double -> Columns -> Bool -> (Bool, [String])
+predictionCSV dist mYErr xTr yTr tree theta stats profiles sigma xss useProfile =
+  (canProf,
+   [ show (xgrid VU.! i) <> "," <> show yh <> "," <> show low' <> "," <> show hi'
    | (i, CI yh lo hi) <- zip [0 ..] pis
    , let low' = yh - sqrt ((yh - lo) ^ 2 + (t * sigma) ^ 2)
    , let hi'  = yh + sqrt ((hi - yh) ^ 2 + (t * sigma) ^ 2)
    ])
   where
-    xGrid  = [xvals]
+    -- The first column is the varied variable (x0); it supplies the CSV's
+    -- x-axis value. All columns are passed to the model so multi-variable
+    -- models can be sliced (other variables fixed by the caller).
+    xgrid  = case xss of
+               (c : _) -> c
+               []      -> VU.empty
+    xGrid  = xss
     predFun x = compile x tree theta
     jac x     = [ compile x (deriveByParam p tree) theta | p <- [0 .. VU.length theta - 1] ]
-    n         = VU.length xvals
+    n         = VU.length xgrid
     k         = VU.length theta
     t         = quantile (studentT . fromIntegral $ max 1 (n - k)) (1 - 0.05 / 2)
     tauMax    = sqrt $ quantile (fDistribution (fromIntegral k)
@@ -586,14 +472,121 @@ predictionCSV dist mYErr xTr yTr tree theta stats profiles sigma xvals =
                                xGrid tree theta 0.05 []
     profPis    = predictionCI (Profile stats profiles) dist predFun jac prof
                                xGrid tree theta 0.05 laplacePis
-    -- force every profile walk inside a try so any failure falls back to Laplace
-    usedProfile = case unsafePerformIO
-                      (Control.Exception.try (evaluate
-                         (Prelude.foldl' (\_ x -> x `seq` 1) (0 :: Int) profPis))
-                       :: IO (Either SomeException Int)) of
-                    Right _ -> True
-                    Left _  -> False
-    pis = if usedProfile then profPis else laplacePis
+    -- calcTheta0 can only solve for Param 0 when it does not appear in both
+    -- operands of a binary node; otherwise the profile path is impossible and
+    -- we must use the Laplace approximation.
+    canProf = useProfile && canInvertParam0 tree
+    pis = if canProf then profPis else laplacePis
+
+-- | True when @Param 0@ can be solved for from the expression, i.e. it never
+-- occurs in both operands of the same binary node. 'calcTheta0' (in srtree)
+-- inverts the tree for the prediction profile; when this holds it would hit
+-- its \"This shouldn't happen!\" ambiguity case.
+canInvertParam0 :: Fix SRTree -> Bool
+canInvertParam0 = snd . cata alg
+  where
+    alg :: SRTree (Bool, Bool) -> (Bool, Bool)
+    alg (Param 0)   = (True, True)
+    alg (Param _)   = (False, True)
+    alg (Var _)     = (False, True)
+    alg (Const _)   = (False, True)
+    alg (Y _)       = (False, True)
+    alg (Uni _ t)   = t
+    alg (Bin _ l r) = let (hl, okl) = l
+                          (hr, okr) = r
+                      in (hl || hr, okl && okr && not (hl && hr))
+
+-- * Profile-likelihood CI helpers shared by the DB commands.
+
+-- | Distribution used for profile-likelihood CIs given the fitting loss
+-- (mirrors eggp's mapping): plain least-squares-type losses are profiled with
+-- the 'LeastSquares' statistic; an @NLL@ loss profiles with its distribution.
+ciDistOf :: Loss -> Distribution
+ciDistOf (NLL d)     = d
+ciDistOf MSE         = LeastSquares
+ciDistOf LOG10       = LeastSquares
+ciDistOf MAE         = LeastSquares
+ciDistOf MAPE        = LeastSquares
+ciDistOf (Pinball _) = LeastSquares
+
+-- | Distinct parameter indices of a tree in left-to-right first-seen order.
+paramIndicesOf :: Fix SRTree -> [Int]
+paramIndicesOf = nub . cata alg
+  where alg :: SRTree [Int] -> [Int]
+        alg (Param ix)  = [ix]
+        alg (Var _)     = []
+        alg (Const _)   = []
+        alg (Y _)       = []
+        alg (Uni _ t)   = t
+        alg (Bin _ l r) = l <> r
+
+-- | Prepare (tree, warm-start theta) for CI computation under @dist@. The
+-- tree is relabeled to contiguous 0-based parameters (ties preserved) and the
+-- warm-start theta has length @nP + extras@. The stored theta is indexed by
+-- 'Param' index but can be stale (the class's best expression may have
+-- changed after fitting), so it is used as a warm start only when it is
+-- compatible; the MLE is re-optimized before profiling anyway.
+prepTreeTheta :: Fix SRTree -> Distribution -> VU.Vector Double -> (Fix SRTree, VU.Vector Double)
+prepTreeTheta tree0 dist theta0 = (tree, warm)
+  where
+    tree   = relabelParamsOrder tree0
+    nP     = maxParamOf tree + 1
+    extras = distExtraParams dist
+    k      = nP + extras
+    pis    = paramIndicesOf tree0
+    warm
+      | VU.null theta0                 = VU.replicate k 0
+      | VU.length theta0 == k          = theta0
+      | VU.length theta0 == nP         = theta0 VU.++ VU.replicate extras 0
+      -- pis is empty for parameter-free expressions: `maximum []` would throw
+      -- when a stale non-empty theta is stored for such a class. When there
+      -- are no params the comprehension below yields [], keeping only extras.
+      | VU.length theta0 > maximum (negate 1 : pis) =
+          VU.fromList [theta0 VU.! ix | ix <- pis] VU.++ VU.replicate extras 0
+      | otherwise                      = VU.replicate k 0
+
+-- | Re-optimize theta via NLopt from a warm start plus random restarts,
+-- returning the best (lowest ctNLL) theta found.
+mleWithRestarts :: EvalTree -> Target -> Int -> IO Target
+mleWithRestarts et warm nRestarts = do
+  let optimizer  = ctOptimizer et
+      storedOpt  = optimizer warm
+      storedNll  = ctNLL et storedOpt
+      k          = VU.length warm
+  restarts <- mapM (\_ -> do
+              theta0 <- VU.replicateM k (randomRIO (-5.0, 5.0))
+              let tOpt = optimizer theta0
+              pure (ctNLL et tOpt, tOpt)) [1 .. nRestarts]
+  let (bestNll, bestTheta) = minimum restarts
+  pure $ if storedNll < bestNll then storedOpt else bestTheta
+
+-- | Profile-likelihood CIs @(lower, upper)@ for the tree parameters of a
+-- fitted expression. The stored theta is used as a warm start when
+-- compatible; the MLE is re-optimized (with random restarts) before
+-- profiling, so stale stored thetas still yield valid CIs. Auxiliary loss
+-- parameters (e.g. Gaussian's noise) are excluded from the result.
+profileCIsFor :: Loss -> Maybe Target -> Columns -> Target -> Fix SRTree -> VU.Vector Double
+              -> IO (Either String [(Double, Double)])
+profileCIsFor loss mYErr xTr yTr tree0 theta0
+  | nP == 0   = pure (Left "expression has no parameters to profile")
+  | otherwise = do
+      mleTheta <- mleWithRestarts et warm 10
+      let stats    = getStatsFromModel dist mYErr xTr yTr tree mleTheta
+          nSamples = VU.length yTr
+      profiles <- getAllProfiles Bates et mleTheta (_stdErr stats) [] 0.05
+      let ciVals = paramCI (Profile stats profiles) nSamples mleTheta 0.05
+          pairs  = [ (l, h) | CI _ l h <- Prelude.take nP ciVals ]
+      pure (Right pairs)
+  where
+    dist         = ciDistOf loss
+    (tree, warm) = prepTreeTheta tree0 dist theta0
+    nP           = maxParamOf tree + 1
+    et           = compileTree dist xTr yTr mYErr tree
+
+-- | CSV cells for CI pairs, padded with empty cells up to @nP@ parameters.
+ciCells :: Int -> [(Double, Double)] -> [String]
+ciCells nP pairs =
+  concat [ [show l, show h] | (l, h) <- pairs ] <> Prelude.replicate (2 * (nP - length pairs)) ""
 
 run (Top n filters criteria NoPat ci) = do
    let getFun = if criteria == ByFitness then getTopFitEClassThat else getTopDLEClassThat
@@ -758,7 +751,7 @@ run (LoadDB fname fitPath ds) = do
       flushGraphStore
       pure (SimpleStr ("e-graph loaded from " <> fname))
 
-run (DBTop fname fitPath ds n varnames rawFilters ci mData) = do
+run (DBTop fname fitPath ds n varnames rawFilters ci mData loss) = do
 
   -- Parse filter strings into structured (field, op, value) triples
   let filters = mapMaybe parseTopFilter rawFilters
@@ -830,33 +823,37 @@ run (DBTop fname fitPath ds n varnames rawFilters ci mData) = do
       pure $ Just (xTr, yTr, mYErr)
     _ -> pure Nothing
 
-  rows <- forM filtered $ \(eid, fit, mTree, _) ->
-    case mTree of
-      Nothing -> pure $ show eid <> ",<extraction failed>," <> show fit
-      Just tree -> do
-        let t = showExpr tree
-            base = intercalate "," [show eid, t, show fit]
-        case (ci, mDataLoaded) of
-          (True, Just (xTr, yTr, mYErr)) -> do
-            let thetaText = lookup eid thetaMap
-                theta = case thetaText of
-                  Nothing -> VU.empty
-                  Just th -> case parseTheta (T.unpack th) of
-                    []    -> VU.empty
-                    (v:_) -> v
-                dist = Gaussian
-                nSamples = VU.length yTr
-                et = compileTree dist xTr yTr mYErr tree
-                stats = getStatsFromModel dist mYErr xTr yTr tree theta
-            profiles <- liftIO $ getAllProfiles Bates et theta (_stdErr stats) [] 0.05
-            let ciVals = paramCI (Profile stats profiles) nSamples theta 0.05
-                maxP = VU.length theta
-                ciStr = intercalate ","
-                      $ Prelude.map (\(CI _ l h) -> show l <> "," <> show h) ciVals
-                      ++ Prelude.replicate (2 * (maxP - length ciVals)) ""
-            pure $ base <> "," <> ciStr
-          _ -> pure base
-  pure . SimpleStr $ intercalate "\n" ("Id,Expression,Fitness" : rows)
+  case (ci, mDataLoaded) of
+    (True, Nothing) ->
+      pure . SimpleStr $ "top: CI requires a data file (use 'with ci data FILE')"
+    _ -> do
+      rows <- forM filtered $ \(eid, fit, mTree, _) ->
+        case mTree of
+          Nothing -> pure (show eid <> ",<extraction failed>," <> show fit, 0, [])
+          Just tree -> do
+            let t    = showExpr tree
+                base = intercalate "," [show eid, t, show fit]
+            ciPairs <- case mDataLoaded of
+              Just (xTr, yTr, mYErr) -> do
+                let thetaText = lookup eid thetaMap
+                    theta = case thetaText of
+                      Nothing -> VU.empty
+                      Just th -> case parseTheta (T.unpack th) of
+                        []    -> VU.empty
+                        (v:_) -> v
+                liftIO $ profileCIsFor loss mYErr xTr yTr tree theta
+              Nothing -> pure (Right [])
+            pure $ case ciPairs of
+              Left _   -> (base, 0, [])
+              Right ps -> (base, length ps, ps)
+      -- pad every row to the widest parameter count so the CSV stays rectangular
+      let maxP  = maximum (0 : [nP | (_, nP, _) <- rows])
+          ciHdr = concat [ ",ci_param_lower_" <> show i <> ",ci_param_upper_" <> show i
+                         | i <- [0 .. maxP - 1] ]
+          header = "Id,Expression,Fitness" <> if ci then ciHdr else ""
+          body = [ base <> (if ci && maxP > 0 then "," <> intercalate "," (ciCells maxP ps) else "")
+                 | (base, _, ps) <- rows ]
+      pure . SimpleStr $ intercalate "\n" (header : body)
 run (DBDist fname fitPath ds n) = do
   r <- liftIO $ withBackend fitPath $ \db -> do
          dsid <- Q.getOrCreateDataset db ds
@@ -867,7 +864,7 @@ run (DBCount fname fitPath op) = do
   c <- liftIO $ withBackend fname $ \db -> Q.countPattern db (T.pack op)
   pure . SimpleStr $ "e-classes containing " <> op <> ": " <> show c
 
-run (DBPareto fname fitPath ds ci byFitness mData) = do
+run (DBPareto fname fitPath ds ci byFitness mData loss) = do
   r <- liftIO $ withBackend fitPath $ \db -> do
          dsid <- Q.getOrCreateDataset db ds
          if byFitness
@@ -882,43 +879,47 @@ run (DBPareto fname fitPath ds ci byFitness mData) = do
       pure $ Just (xTr, yTr, mYErr)
     _ -> pure Nothing
 
-  -- Load graph for expression extraction if CI requested
-  egForCI <- case (ci, mDataLoaded) of
-    (True, Just _) -> do
-      er <- liftIO $ withBackendKeepOpen fname $ \db -> do
-             dsid <- Q.getOrCreateDataset db ds
-             loadGraphLazy db dsid 50000 100000 100000
-      case er of
-        Left _ -> pure Nothing
-        Right eg' -> do
-          put eg'
-          -- Same as DBTop: skip recalculateBestAllStream; pages already
-          -- carry correct _cost/_best from a prior eqsat or import.
-          pure $ Just eg'
-    _ -> pure Nothing
-
-  case (ci, mDataLoaded, egForCI) of
-    (True, Just (xTr, yTr, mYErr), Just _) -> do
-      rows <- forM r $ \(eid, f, s) -> do
-                tree <- getBestExpr eid
-                thetas <- getTheta eid
-                let theta = if null thetas then VU.empty else head thetas
-                    dist = Gaussian
-                    nSamples = VU.length yTr
-                    et = compileTree dist xTr yTr mYErr tree
-                    stats = getStatsFromModel dist mYErr xTr yTr tree theta
-                profiles <- liftIO $ getAllProfiles Bates et theta (_stdErr stats) [] 0.05
-                let ciVals = paramCI (Profile stats profiles) nSamples theta 0.05
-                    maxP = VU.length theta
-                    ciStr = intercalate ","
-                          $ Prelude.map (\(CI _ l h) -> show l <> "," <> show h) ciVals
-                          ++ Prelude.replicate (2 * (maxP - length ciVals)) ""
-                pure $ show eid <> "," <> show f <> "," <> show s <> "," <> ciStr
-      let header = if byFitness then "Id,Fitness,Size" else "Id,Fitness,DL"
-      pure . SimpleStr . intercalate "\n" $ (header : rows)
+  case (ci, mDataLoaded) of
+    (True, Nothing) ->
+      pure . SimpleStr $ "pareto: CI requires a data file (use 'with ci data FILE')"
     _ -> do
-      let header = if byFitness then "Id,Fitness,Size" else "Id,Fitness,DL"
-      pure . SimpleStr . intercalate "\n" $ (header : [show eid <> "," <> show f <> "," <> show s | (eid, f, s) <- r])
+      let eids = [eid | (eid, _, _) <- r]
+      -- DB-native extraction + stored theta (no in-memory graph needed)
+      trees <- if ci
+        then liftIO $ withBackend fname $ \egDb -> forM eids (\eid -> extractBestFromDB egDb eid)
+        else pure (Prelude.replicate (length eids) Nothing)
+      thetaMap <- if ci && not (null eids)
+        then liftIO $ withBackend fitPath $ \fitDb -> do
+          dsid <- Q.getOrCreateDataset fitDb ds
+          let inClause = "(" <> T.pack (intercalate "," (map show eids)) <> ")"
+          thRows <- queryDb fitDb
+            ("SELECT eid, theta FROM dataset_fit WHERE dataset_id = ? AND eid IN " <> inClause)
+            [SqlInteger (fromIntegral dsid)]
+          pure [ (sqlToInt e, sqlToText t) | [e, t] <- thRows ]
+        else pure []
+      rows <- forM (Prelude.zip3 r trees [lookup e thetaMap | e <- eids]) $
+        \((eid, f, s), mTree, mTh) -> do
+          let base = intercalate "," [show eid, show f, show s]
+          case (ci, mDataLoaded, mTree) of
+            (True, Just (xTr, yTr, mYErr), Just tree) -> do
+              let theta = case mTh of
+                    Nothing -> VU.empty
+                    Just th -> case parseTheta (T.unpack th) of
+                      []    -> VU.empty
+                      (v:_) -> v
+              ciPairs <- liftIO $ profileCIsFor loss mYErr xTr yTr tree theta
+              pure $ case ciPairs of
+                Left _   -> (base, 0, [])
+                Right ps -> (base, length ps, ps)
+            _ -> pure (base, 0, [])
+      let maxP  = maximum (0 : [nP | (_, nP, _) <- rows])
+          ciHdr = concat [ ",ci_param_lower_" <> show i <> ",ci_param_upper_" <> show i
+                         | i <- [0 .. maxP - 1] ]
+          header = (if byFitness then "Id,Fitness,Size" else "Id,Fitness,DL")
+                     <> if ci then ciHdr else ""
+          body = [ base <> (if ci && maxP > 0 then "," <> intercalate "," (ciCells maxP ps) else "")
+                 | (base, _, ps) <- rows ]
+      pure . SimpleStr $ intercalate "\n" (header : body)
 
 run (PushFit fname fitPath ds) = do
   eg <- get
@@ -1105,7 +1106,7 @@ run (DBReport fname fitPath ds trainPath testPath eid ci lossName) = do
         (((xTe, yTe, _, _), (mYErrTe, _), _, _) : _) -> pure $ Just (xTe, yTe, mYErrTe)
         _ -> pure Nothing
 
-  let dist = Gaussian
+  let dist = ciDistOf loss
       loss = fromMaybe (NLL Gaussian) (readLoss lossName)
       theta = case parseTheta (T.unpack thetaText) of [] -> VU.empty; (v:_) -> v
       thetaStr = intercalate ", " (Prelude.map show (VU.toList theta))
@@ -1135,10 +1136,10 @@ run (DBReport fname fitPath ds trainPath testPath eid ci lossName) = do
       mainRows =
         "Info,Training,Test\n"
         <> "Id," <> show canonical <> ",\n"
-        <> "Expr," <> treeStr <> ",\n"
+        <> "Expr,\"" <> treeStr <> "\",\n"
         <> "Numpy,\"" <> py <> "\",\n"
         <> "Nodes," <> show numNodes <> ",\n"
-        <> "params," <> thetaStr <> ",\n"
+        <> "params,\"" <> thetaStr <> "\",\n"
         <> "Fitness," <> fitStr <> "," <> fitTe <> "\n"
         <> "MSE," <> show mseTr <> "," <> fmt mseTe <> "\n"
         <> "R^2," <> show r2Tr <> "," <> fmt r2Te <> "\n"
@@ -1148,16 +1149,15 @@ run (DBReport fname fitPath ds trainPath testPath eid ci lossName) = do
   -- CI (profile likelihood) rows appended when requested
   ciStr <- case (ci, mTree, mData) of
     (True, Just tr, Just (xTr, yTr, mYErr)) -> do
-      let t  = relabelParams tr
-          et = compileTree dist xTr yTr mYErr t
-          stats = getStatsFromModel dist mYErr xTr yTr t theta
-      profiles <- liftIO $ getAllProfiles Bates et theta (_stdErr stats) [] 0.05
-      let ciVals = paramCI (Profile stats profiles) (VU.length yTr) theta 0.05
-          rows = [ "ci_param_lower_" <> show i <> "," <> show l <> ","
-                 | (i, CI _ l _) <- zip [0..] ciVals ]
-              <> [ "ci_param_upper_" <> show i <> "," <> show u <> ","
-                 | (i, CI _ _ u) <- zip [0..] ciVals ]
-      pure (if null rows then "" else "\n" <> intercalate "\n" rows)
+      ciPairs <- liftIO $ profileCIsFor loss mYErr xTr yTr tr theta
+      pure $ case ciPairs of
+        Left _   -> ""
+        Right ps ->
+          let rows = [ "ci_param_lower_" <> show i <> "," <> show l <> ","
+                     | (i, (l, _)) <- zip [0..] ps ]
+                  <> [ "ci_param_upper_" <> show i <> "," <> show u <> ","
+                     | (i, (_, u)) <- zip [0..] ps ]
+          in if null rows then "" else "\n" <> intercalate "\n" rows
     _ -> pure ""
 
   pure . SimpleStr $ mainRows <> ciStr
@@ -1167,13 +1167,13 @@ run (DBReport fname fitPath ds trainPath testPath eid ci lossName) = do
 -- Output format: two CSV sections separated by a blank line.
 -- Section 1 (profile data): param,tau,theta_0,...,theta_k,opt
 -- Section 2 (contour data): i,j,theta_i,theta_j
-run (DBProfileData fname fitPath ds eid dataPath) = do
+run (DBProfileData fname fitPath ds eid dataPath loss) = do
   -- Extract expression from DB
   mTree <- liftIO $ withBackend fname $ \db -> extractBestFromDB db eid
 
   case mTree of
     Nothing -> pure . SimpleStr $ "extraction failed for e-class " <> show eid
-    Just tree -> do
+    Just tree0 -> do
       -- Get theta from fit DB
       thetaText <- liftIO $ withBackend fitPath $ \fitDb -> do
         dsid <- Q.getOrCreateDataset fitDb ds
@@ -1184,36 +1184,25 @@ run (DBProfileData fname fitPath ds eid dataPath) = do
           [[th]] -> pure (sqlToText th)
           _      -> pure ""
 
-      let theta = case parseTheta (T.unpack thetaText) of
+      let theta0 = case parseTheta (T.unpack thetaText) of
             []    -> VU.empty
             (v:_) -> v
+          dist = ciDistOf loss
+          (tree, theta) = prepTreeTheta tree0 dist theta0
 
-      if VU.length theta < 2
-        then pure . SimpleStr $ "theta has fewer than 2 parameters, cannot profile"
+      if maxParamOf tree < 0
+        then pure . SimpleStr $ "expression has no parameters, cannot profile"
         else do
           -- Load dataset
           ((xTr, yTr, _, _), (mYErr, _), _, _) <- liftIO $ loadDataset dataPath True
-          let dist = Gaussian
-              nSamples = VU.length yTr
-              kTree = countParamsUniq tree
-              nNoiseParams = 1  -- Gaussian adds sigma parameter
-              k = min (VU.length theta) (kTree + nNoiseParams)
-              thetaProf = VU.take k theta
+          let nSamples = VU.length yTr
+              kTree = maxParamOf tree + 1
+              thetaProf = theta
               et = compileTree dist xTr yTr mYErr tree
 
-          -- Find correct MLE via random restarts (stored theta may be wrong)
-          let nRestarts = 10 :: Int
-              optimizer = ctOptimizer et
-          mOptTheta <- liftIO $ Control.Exception.try $ do
-            restarts <- mapM (\_ -> do
-              theta0 <- VU.replicateM k (pure (fromRational (toRational (unsafePerformIO (randomRIO (-5.0, 5.0) :: IO Double)))))
-              let thetaOpt = optimizer theta0
-              pure (ctNLL et thetaOpt, thetaOpt)
-              ) [1..nRestarts]
-            let storedOpt = optimizer thetaProf
-                storedNll = ctNLL et storedOpt
-                (bestNll, bestTheta) = minimum restarts
-            pure $ if storedNll < bestNll then storedOpt else bestTheta
+          -- Find correct MLE via random restarts (the stored theta can be
+          -- stale relative to the current best expression)
+          mOptTheta <- liftIO $ Control.Exception.try $ mleWithRestarts et thetaProf 10
 
           case mOptTheta of
             Left (ex :: SomeException) -> pure . SimpleStr $ "MLE optimization failed: " ++ show ex
@@ -1246,41 +1235,100 @@ run (DBProfileData fname fitPath ds eid dataPath) = do
                                 ]
                         else []
 
-                      -- Section 3: prediction intervals (single-variable only)
-                      singleVar = maxVarIdx tree <= 0
-                      statsMle  = getStatsFromModel dist mYErr xTr yTr tree mleTheta
-                      -- residual std for a true prediction interval
-                      yhatTr   = compile xTr tree mleTheta
-                      nTr      = VU.length yTr
-                      kTh      = VU.length mleTheta
-                      sigma    = sqrt (VU.sum (VU.zipWith (\a b -> (a-b)^2) yTr yhatTr)
-                                        / fromIntegral (max 1 (nTr - kTh)))
-                      predLines
-                        | not singleVar || null xTr = []
-                        | otherwise =
-                            let x0col = head xTr
-                                xlo = VU.minimum x0col
-                                xhi = VU.maximum x0col
-                                nP  = 40   -- profile mode is expensive per point
-                                xvals = VU.generate nP
-                                          (\i -> xlo + fromIntegral i / fromIntegral (nP-1) * (xhi-xlo))
-                                (usedProf, rows) =
-                                  predictionCSV dist mYErr xTr yTr tree mleTheta
-                                               statsMle batesTreeProfiles sigma xvals
-                            in ("method," <> (if usedProf then "profile" else "laplace"))
-                               : ("x0,yhat,lower,upper" : rows)
-
                       result = unlines $
                         ["param,tau," <> intercalate "," [ "theta_" <> show c | c <- [0..nTreeProfs-1] ] <> ",opt"]
                         ++ gridProfileLines
                         ++ [""]
                         ++ contourLines
-                        ++ [""]
-                        ++ predLines
 
                   mResult <- liftIO $ Control.Exception.try (evaluate (force result) :: IO String)
                   case mResult of
                     Left (ex :: SomeException) -> pure . SimpleStr $ "profiling failed: " ++ show ex
+                    Right r -> pure . SimpleStr $ r
+
+-- | Prediction-interval data for an e-class. Kept separate from
+-- 'DBProfileData' so plotting the parameter profiles never triggers the
+-- prediction computation (which is expensive and can fail for some models).
+-- x0 is varied over its observed range; other variables are held at their
+-- training mean. Output: ``method,<profile|laplace>`` then
+-- ``x0,yhat,lower,upper`` rows.
+run (DBPredictionData fname fitPath ds eid dataPath loss) = do
+  mTree <- liftIO $ withBackend fname $ \db -> extractBestFromDB db eid
+  case mTree of
+    Nothing -> pure . SimpleStr $ "extraction failed for e-class " <> show eid
+    Just tree0 -> do
+      thetaText <- liftIO $ withBackend fitPath $ \fitDb -> do
+        dsid <- Q.getOrCreateDataset fitDb ds
+        rows <- queryDb fitDb
+          "SELECT theta FROM dataset_fit WHERE dataset_id = ? AND eid = ?"
+          [SqlInteger (fromIntegral dsid), SqlInteger (fromIntegral eid)]
+        case rows of
+          [[th]] -> pure (sqlToText th)
+          _      -> pure ""
+
+      let theta0 = case parseTheta (T.unpack thetaText) of
+            []    -> VU.empty
+            (v:_) -> v
+          dist = ciDistOf loss
+          (tree, theta) = prepTreeTheta tree0 dist theta0
+
+      if maxParamOf tree < 0
+        then pure . SimpleStr $ "expression has no parameters, cannot compute prediction intervals"
+        else do
+          ((xTr, yTr, _, _), (mYErr, _), _, _) <- liftIO $ loadDataset dataPath True
+          let et = compileTree dist xTr yTr mYErr tree
+          mOptTheta <- liftIO $ Control.Exception.try $ mleWithRestarts et theta 10
+          case mOptTheta of
+            Left (ex :: SomeException) -> pure . SimpleStr $ "MLE optimization failed: " ++ show ex
+            Right mleTheta -> do
+              let stdErrsMle = _stdErr $ getStatsFromModel dist mYErr xTr yTr tree mleTheta
+              mBatesProfiles <- liftIO $ Control.Exception.try $
+                getAllProfiles Bates et mleTheta stdErrsMle [] 0.05
+              case mBatesProfiles of
+                Left (ex :: SomeException) -> pure . SimpleStr $ "Bates profiling failed: " ++ show ex
+                Right batesProfiles -> do
+                  let kTree = maxParamOf tree + 1
+                      batesTreeProfiles = Prelude.take kTree batesProfiles
+                      statsMle  = getStatsFromModel dist mYErr xTr yTr tree mleTheta
+                      -- residual std for a true prediction interval
+                      yhatTr    = compile xTr tree mleTheta
+                      nTr       = VU.length yTr
+                      kTh       = VU.length mleTheta
+                      sigma     = sqrt (VU.sum (VU.zipWith (\a b -> (a-b)^2) yTr yhatTr)
+                                          / fromIntegral (max 1 (nTr - kTh)))
+                      (profRes, laplaceRes)
+                        | null xTr = ((False, []), (False, []))
+                        | otherwise =
+                            let x0col = head xTr
+                                xlo = VU.minimum x0col
+                                xhi = VU.maximum x0col
+                                nP  = 40   -- profile mode is expensive per point
+                                xgrid = VU.generate nP
+                                          (\i -> xlo + fromIntegral i / fromIntegral (nP-1) * (xhi-xlo))
+                                colMean c
+                                  | VU.null c = 0
+                                  | otherwise = VU.sum c / fromIntegral (VU.length c)
+                                xss = [ if i == 0 then xgrid
+                                        else VU.replicate nP (colMean c)
+                                      | (i, c) <- zip [0 :: Int ..] xTr ]
+                            in ( predictionCSV dist mYErr xTr yTr tree mleTheta
+                                               statsMle batesTreeProfiles sigma xss True
+                               , predictionCSV dist mYErr xTr yTr tree mleTheta
+                                               statsMle batesTreeProfiles sigma xss False )
+                  -- Try the profile-likelihood band; fall back to the Laplace
+                  -- approximation when the profile walk cannot be built (e.g.
+                  -- calcTheta0 cannot invert a model where Param 0 appears in
+                  -- both operands).
+                  mProf <- liftIO $ Control.Exception.try (evaluate (force (snd profRes)))
+                  let (usedProf, rows) = case mProf of
+                        Right r -> (fst profRes, r)
+                        Left (_ :: SomeException) -> (False, snd laplaceRes)
+                      result = unlines $
+                        ("method," <> (if usedProf then "profile" else "laplace"))
+                        : ("x0,yhat,lower,upper" : rows)
+                  mResult <- liftIO $ Control.Exception.try (evaluate (force result) :: IO String)
+                  case mResult of
+                    Left (ex :: SomeException) -> pure . SimpleStr $ "prediction failed: " ++ show ex
                     Right r -> pure . SimpleStr $ r
 
 -- | DB-native optimize: extract the best expression, re-fit with NLopt,
@@ -1364,7 +1412,7 @@ run (DBEClassTerminals fname fitPath ds eid) = do
 -- 2. For each candidate, load its best-expression tree and check pattern match
 -- 3. Return the first N that match, with wildcard bindings
 -- Memory is O(M + depth) — no full match result set in memory.
-run (DBTopPattern fname fitPath ds n patStr isRoot negate ci) = do
+run (DBTopPattern fname fitPath ds n patStr isRoot negate ci loss) = do
   -- 1. Parse pattern
   let etree = parsePat (B.pack patStr)
   case etree of
@@ -1415,12 +1463,11 @@ run (DBTopPattern fname fitPath ds n patStr isRoot negate ci) = do
             ((xTr, yTr, _, _), (mYErr, _), _, _) <- loadDataset dataPath True
             pure $ Just (xTr, yTr, mYErr)
           pure (tm, md)
-      -- 6. Format output
-      let header = "Id,Expression,Fitness" <> concat ["," <> vname | (_, vname) <- wildcards]
+      -- 6. Format output (with optional CI columns)
       body <- forM rows $ \(eid, fit, mTree, bindings) ->
         case mTree of
-          Nothing -> pure $ show eid <> ",<extraction failed>," <> show fit
-                             <> concat (Prelude.replicate (length wildcards) ",?")
+          Nothing -> pure (show eid <> ",<extraction failed>," <> show fit
+                             <> concat (Prelude.replicate (length wildcards) ",?"), 0, [])
           Just tree -> do
             let t = showExpr tree
                 wcCols = concatMap (\(c, vname) ->
@@ -1437,19 +1484,19 @@ run (DBTopPattern fname fitPath ds n patStr isRoot negate ci) = do
                       Just th -> case parseTheta (T.unpack th) of
                         []    -> VU.empty
                         (v:_) -> v
-                    dist = Gaussian
-                    nSamples = VU.length yTr
-                    et = compileTree dist xTr yTr mYErr tree
-                    stats = getStatsFromModel dist mYErr xTr yTr tree theta
-                profiles <- liftIO $ getAllProfiles Bates et theta (_stdErr stats) [] 0.05
-                let ciVals = paramCI (Profile stats profiles) nSamples theta 0.05
-                    maxP = VU.length theta
-                    ciStr = intercalate ","
-                          $ Prelude.map (\(CI _ l h) -> show l <> "," <> show h) ciVals
-                          ++ Prelude.replicate (2 * (maxP - length ciVals)) ""
-                pure $ base <> "," <> ciStr
-              _ -> pure base
-      pure . SimpleStr $ intercalate "\n" (header : body)
+                ciPairs <- liftIO $ profileCIsFor loss mYErr xTr yTr tree theta
+                pure $ case ciPairs of
+                  Left _   -> (base, 0, [])
+                  Right ps -> (base, length ps, ps)
+              _ -> pure (base, 0, [])
+      let maxP  = maximum (0 : [nP | (_, nP, _) <- body])
+          ciHdr = concat [ ",ci_param_lower_" <> show i <> ",ci_param_upper_" <> show i
+                         | i <- [0 .. maxP - 1] ]
+          wcHdr = concat ["," <> vname | (_, vname) <- wildcards]
+          header = "Id,Expression,Fitness" <> wcHdr <> maybe "" (const ciHdr) ci
+          body' = [ base <> maybe "" (const (if maxP > 0 then "," <> intercalate "," (ciCells maxP ps) else "")) ci
+                  | (base, _, ps) <- body ]
+      pure . SimpleStr $ intercalate "\n" (header : body')
 
 -- | Out-of-core seed import: stream every expression from the CSV file
 -- directly into the database (structural, content-addressed) instead of first

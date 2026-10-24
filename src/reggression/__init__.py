@@ -219,7 +219,7 @@ class Reggression():
         """Return the db:fitDb spec string for DB-native commands."""
         return f"{self.db}:{self.fitDb}" if self.fitDb else self.db
 
-    def top(self, n=5, filters=[], criteria="fitness", pattern="", isRoot=False, negate=False, ci=False):
+    def top(self, n=5, filters=[], criteria="fitness", pattern="", isRoot=False, negate=False, ci=False, dataPath=None):
         ''' Returns the top-n expressions following a certain criteria.
 
         Parameters
@@ -254,6 +254,14 @@ class Reggression():
         negate : bool, default=False
            Whether to retrieve expressions NOT matching the pattern
 
+        ci : bool, default=False
+           Whether to append profile-likelihood confidence intervals for the
+           parameters of each expression (uses the loss of this session and
+           the data CSV to compute them).
+
+        dataPath : str, default=None
+           CSV used to compute the CIs. If None, uses self.dataset.
+
         '''
         if criteria not in ["fitness", "dl"]:
             raise ValueError('criteria must be either fitness or dl')
@@ -264,14 +272,16 @@ class Reggression():
 
         if not pattern:
             cistr = " with ci" if ci else ""
+            dataStr = f" data {dataPath or self.dataset}" if ci else ""
             filterStr = " " + " ".join(f"[{f}]" for f in filters) if filters else ""
-            query = f"top {self._dbSpec()} {self.dataset_name} {n}{filterStr}{cistr}"
+            query = f"top {self._dbSpec()} {self.dataset_name} {n}{filterStr}{cistr}{dataStr}"
             return self.runQuery(query)
         else:
             rootStr = " root" if isRoot else ""
             notStr = " not" if negate else ""
             cistr = " ci" if ci else ""
-            query = f"top-pattern {self._dbSpec()} {self.dataset_name} {n} {pattern}{rootStr}{notStr}{cistr}"
+            dataStr = f" data {dataPath or self.dataset}" if ci else ""
+            query = f"top-pattern {self._dbSpec()} {self.dataset_name} {n} {pattern}{rootStr}{notStr}{cistr}{dataStr}"
             return self.runQuery(query)
 
     def distribution(self, filters=[], limitedAt=25, dsc=True, byFitness=True, atLeast=1000, fromTop=5000):
@@ -402,7 +412,7 @@ class Reggression():
             TIR, HL, OPERON, BINGO, GOMEA, PYSR, SBP, EPLEX, NEOGP).
         '''
         return self.runQuery(f"insert {self._dbSpec()} {self.dataset_name} {alg} {expr}", df=False)
-    def pareto(self, byFitness=True, ci=False):
+    def pareto(self, byFitness=True, ci=False, dataPath=None):
         ''' Return the Pareto front of accuracy x size
 
         Parameters
@@ -412,10 +422,13 @@ class Reggression():
             Whether the first objective is fitness or description length
         ci : bool, default=False
             Whether to include profile-likelihood confidence intervals
+        dataPath : str, default=None
+            CSV used to compute the CIs. If None, uses self.dataset.
         '''
         cistr = " with ci" if ci else ""
+        dataStr = f" data {dataPath or self.dataset}" if ci else ""
         byFitnessStr = " by fitness" if byFitness else " by dl"
-        front = self.runQuery(f"pareto {self._dbSpec()} {self.dataset_name}{cistr}{byFitnessStr}")
+        front = self.runQuery(f"pareto {self._dbSpec()} {self.dataset_name}{cistr}{dataStr}{byFitnessStr}")
         col = 'Fitness' if byFitness else 'DL'
         return front[front[col] >= front[col].cummax()]
     def extractPattern(self, eid):
@@ -669,9 +682,76 @@ class Reggression():
         '''
         return self.importDB(fname, self.db, extractParameters)
 
+    _PROFILE_ERR_PREFIXES = ("theta has fewer", "theta/parameter mismatch", "extraction failed",
+                             "The id", "profiling failed", "prediction failed",
+                             "MLE optimization failed", "Bates profiling failed",
+                             "no theta stored", "expression has no parameters",
+                             "expression parameters are not contiguous")
+
+    def _profileDataRaw(self, eid, dataPath=None, dataSpec=None):
+        ''' Run the Haskell ``profile-data`` command and return its raw
+        (profiles + contours) response. Raises ValueError on an error. '''
+        data = dataSpec or dataPath or self.dataset
+        raw = self.runQuery(
+            f"profile-data {self._dbSpec()} {self.dataset_name} {eid} {data}",
+            df=False
+        )
+        if not raw or raw.strip().startswith(self._PROFILE_ERR_PREFIXES):
+            raise ValueError(raw.strip() if raw else "Empty response from profile-data")
+        return raw
+
+    def _predictionDataRaw(self, eid, dataPath=None, dataSpec=None):
+        ''' Run the Haskell ``prediction-data`` command and return its raw
+        (prediction-interval) response. Raises ValueError on an error. '''
+        data = dataSpec or dataPath or self.dataset
+        raw = self.runQuery(
+            f"prediction-data {self._dbSpec()} {self.dataset_name} {eid} {data}",
+            df=False
+        )
+        if not raw or raw.strip().startswith(self._PROFILE_ERR_PREFIXES):
+            raise ValueError(raw.strip() if raw else "Empty response from prediction-data")
+        return raw
+
+    @staticmethod
+    def _profileSection(raw, header):
+        ''' Return the blank-line-separated section starting with `header`. '''
+        for sec in raw.strip().split("\n\n"):
+            if sec.lstrip().startswith(header):
+                return sec
+        return ""
+
+    @staticmethod
+    def _parsePrediction(section):
+        ''' Parse the prediction-interval section:
+        ``method,<profile|laplace>`` then ``x0,yhat,lower,upper`` rows.
+        Returns None when the section is absent/malformed (e.g. a
+        multi-variable model, for which no prediction band is produced). '''
+        lines = [l for l in section.strip().split("\n") if l.strip()]
+        if not lines or not lines[0].startswith("method,"):
+            return None
+        method = lines[0].split(",", 1)[1].strip()
+        rows = []
+        for line in lines[1:]:
+            if line.startswith("x0,"):
+                continue
+            parts = line.split(",")
+            if len(parts) != 4:
+                continue
+            try:
+                rows.append([float(p) for p in parts])
+            except ValueError:
+                continue
+        if not rows:
+            return None
+        arr = np.asarray(rows, dtype=float)
+        return {"method": method, "x0": arr[:, 0], "yhat": arr[:, 1],
+                "lower": arr[:, 2], "upper": arr[:, 3]}
+
     def profilePlot(self, eid, dataPath=None, dataSpec=None, saveTo=None):
-        ''' Compute profile-likelihood data and plot tau vs theta curves
-        and pairwise theta x theta contour plots.
+        ''' Compute profile-likelihood data and plot tau vs theta curves and
+        pairwise theta x theta contour plots.
+
+        Use :meth:`predictionPlot` for the prediction interval.
 
         Parameters
         ----------
@@ -700,20 +780,12 @@ class Reggression():
         from matplotlib.colors import Normalize
         from matplotlib.cm import ScalarMappable
 
-        data = dataSpec or dataPath or self.dataset
-        raw = self.runQuery(
-            f"profile-data {self._dbSpec()} {self.dataset_name} {eid} {data}",
-            df=False
-        )
+        raw = self._profileDataRaw(eid, dataPath, dataSpec)
 
-        # Check for error messages from Haskell
-        if not raw or raw.startswith("theta has fewer") or raw.startswith("extraction failed") or raw.startswith("The id") or raw.startswith("profiling failed"):
-            raise ValueError(raw.strip() if raw else "Empty response from profile-data")
-
-        # Parse the two sections
-        sections = raw.strip().split("\n\n")
-        profile_section = sections[0] if len(sections) > 0 else ""
-        contour_section = sections[1] if len(sections) > 1 else ""
+        # Select sections by header so a missing section does not shift the
+        # profile/contour parsing.
+        profile_section = self._profileSection(raw, "param,")
+        contour_section = self._profileSection(raw, "i,j,")
 
         # Parse profile data
         profile_lines = [l for l in profile_section.strip().split("\n") if l and not l.startswith("param,")]
@@ -744,20 +816,23 @@ class Reggression():
 
         k = len(profiles)
         if k == 0:
-            raise ValueError("No profile data returned. Check that the expression has >= 2 parameters.")
+            raise ValueError("No profile data returned. Check that the expression has parameters.")
 
-        # Create subplots: row 1 = tau vs theta profiles, row 2 = contour (full width)
+        # Layout: the tau-vs-theta profiles first (wrapping into rows when there
+        # are many), then one panel per (theta_i, theta_j) pair so contours
+        # never overlap. `ncols` caps the figure width for high-dimensional fits.
         n_contour_pairs = k * (k - 1) // 2
-        fig = plt.figure(figsize=(5 * k, 4 * 2))
-        gs_top = fig.add_gridspec(1, k, hspace=0.3, top=0.92, bottom=0.55)
-        gs_bot = fig.add_gridspec(1, 1, hspace=0.3, top=0.45, bottom=0.12)
-
-        axes_top = [fig.add_subplot(gs_top[0, i]) for i in range(k)]
-        ax_contour = fig.add_subplot(gs_bot[0, 0]) if n_contour_pairs > 0 else None
+        ncols = max(1, min(k, 4))
+        nrows_prof = (k + ncols - 1) // ncols
+        nrows_cont = (n_contour_pairs + ncols - 1) // ncols if n_contour_pairs else 0
+        nrows = nrows_prof + nrows_cont
+        fig = plt.figure(figsize=(5 * ncols, 4 * nrows))
+        gs = fig.add_gridspec(nrows, ncols, hspace=0.45, wspace=0.35,
+                              top=0.95, bottom=0.06, left=0.07, right=0.98)
 
         # Plot theta vs tau for each parameter (theta on x, tau on y)
         for p_idx in range(k):
-            ax = axes_top[p_idx]
+            ax = fig.add_subplot(gs[p_idx // ncols, p_idx % ncols])
             prof = profiles[p_idx]
             taus = np.array(prof["taus"])
             thetas_p = np.array(prof["thetas"][p_idx])  # the profiled parameter
@@ -774,26 +849,102 @@ class Reggression():
             ax.legend(fontsize=8)
             ax.grid(True, alpha=0.3)
 
-        # Plot pairwise contours
-        if ax_contour is not None:
-            for i in range(k):
-                for j in range(i + 1, k):
-                    if (i, j) in contours:
-                        ti_arr = np.array(contours[(i, j)][0])
-                        tj_arr = np.array(contours[(i, j)][1])
-                        ax_contour.plot(ti_arr, tj_arr, 'b-', linewidth=1.5)
-                        ax_contour.plot(profiles[i]["opt"], profiles[j]["opt"], 'r+', markersize=10, markeredgewidth=2, label='MLE')
-                        ax_contour.legend(fontsize=8)
-                    ax_contour.set_xlabel(f'theta_{i}')
-                    ax_contour.set_ylabel(f'theta_{j}')
-                    ax_contour.set_title(f'Contour: theta_{i} x theta_{j}')
-                    ax_contour.grid(True, alpha=0.3)
-            # Make contour square by using equal aspect with dataLim
-            ax_contour.set_box_aspect(1)
+        # One subplot per pairwise contour
+        for idx, (i, j) in enumerate((i, j) for i in range(k) for j in range(i + 1, k)):
+            ax = fig.add_subplot(gs[nrows_prof + idx // ncols, idx % ncols])
+            if (i, j) in contours:
+                ti_arr = np.array(contours[(i, j)][0])
+                tj_arr = np.array(contours[(i, j)][1])
+                ax.plot(ti_arr, tj_arr, 'b-', linewidth=1.5)
+                ax.plot(profiles[i]["opt"], profiles[j]["opt"], 'r+', markersize=10,
+                        markeredgewidth=2, label='MLE')
+                ax.legend(fontsize=8)
+            ax.set_xlabel(f'theta_{i}')
+            ax.set_ylabel(f'theta_{j}')
+            ax.set_title(f'Contour: theta_{i} x theta_{j}')
+            ax.grid(True, alpha=0.3)
+            ax.set_box_aspect(1)
 
         if saveTo:
             fig.savefig(saveTo, dpi=150, bbox_inches='tight')
         return fig
+
+    def predictionPlot(self, eid, dataPath=None, dataSpec=None, saveTo=None):
+        ''' Plot the profile-likelihood 95% prediction interval.
+
+        x0 is varied over its observed range. For multi-variable models the
+        other variables are held at their training mean (a 1-D slice of the
+        model). The band is the profile-likelihood interval with a Laplace
+        fallback; the method used is attached as ``fig.profile_method`` and
+        the parsed data as ``fig.prediction``.
+
+        Parameters
+        ----------
+        eid : int
+            The e-class ID of the expression.
+
+        dataPath : str, default=None
+            Path to the dataset CSV. If None, uses self.dataset.
+
+        dataSpec : str, default=None
+            Full data spec for loadDataset; overrides dataPath.
+
+        saveTo : str, default=None
+            If provided, save the plot to this file path instead of showing.
+
+        Returns
+        -------
+        fig : matplotlib Figure
+        '''
+        import matplotlib
+        if saveTo:
+            matplotlib.use('Agg')
+        import matplotlib.pyplot as plt
+
+        raw = self._predictionDataRaw(eid, dataPath, dataSpec)
+        pred = self._parsePrediction(raw)
+        if pred is None:
+            raise ValueError("no prediction interval available for this expression")
+
+        fig, ax = plt.subplots(figsize=(8, 4.5))
+        ax.fill_between(pred["x0"], pred["lower"], pred["upper"],
+                        alpha=0.25, color="C0", label="95% prediction interval")
+        ax.plot(pred["x0"], pred["yhat"], color="C0", label="prediction")
+        ax.set_xlabel("x0")
+        ax.set_ylabel("y")
+        ax.set_title("Prediction (profile-likelihood)" if pred["method"] == "profile"
+                     else "Prediction (Laplace fallback)")
+        ax.legend(fontsize=8)
+        ax.grid(True, alpha=0.3)
+        fig.prediction = pred
+        fig.profile_method = pred["method"]
+
+        if saveTo:
+            fig.savefig(saveTo, dpi=150, bbox_inches="tight")
+        return fig
+
+    def predictionData(self, eid, dataPath=None, dataSpec=None):
+        ''' Return the profile-likelihood 95% prediction interval computed by
+        ``profile-data`` as a DataFrame with columns ``x0, yhat, lower, upper``.
+
+        x0 is varied over its observed range and, for multi-variable models,
+        the other variables are held at their training mean. If no prediction
+        band is available (e.g. a parameter-free expression) an empty DataFrame
+        is returned with ``df.attrs["method"]`` = None; otherwise the method is
+        ``"profile"`` or ``"laplace"`` (the latter when the profile walk fell
+        back to the Laplace approximation).
+        '''
+        raw = self._predictionDataRaw(eid, dataPath, dataSpec)
+        pred = self._parsePrediction(raw)
+        cols = ["x0", "yhat", "lower", "upper"]
+        if pred is None:
+            df = pd.DataFrame(columns=cols)
+            df.attrs["method"] = None
+            return df
+        df = pd.DataFrame({"x0": pred["x0"], "yhat": pred["yhat"],
+                           "lower": pred["lower"], "upper": pred["upper"]})
+        df.attrs["method"] = pred["method"]
+        return df
 
     def getNEclasses(self, eid, n=10):
         return self.runQuery(f"getNEclasses {self._dbSpec()} {self.dataset_name} {n} {eid}")

@@ -1,5 +1,37 @@
 # Changelog for reggression
 
+## 2.4.1
+
+### Profile-likelihood prediction intervals
+
+- New `predictionPlot(eid, ...)` and `predictionData(eid)` methods, backed by a
+  new `prediction-data` command. `profilePlot` is again theta-profiles plus
+  pairwise contours only; plotting profiles no longer triggers the prediction
+  computation.
+- `predictionCSV` supports multi-variable models: x0 is varied over its
+  observed range while the other variables are held at their training mean.
+- Falls back to the Laplace approximation when the prediction profile cannot be
+  built (`Param 0` appears in both operands of a binary node), detected by
+  `canInvertParam0`; the CSV reports which method was used.
+
+### Fixes
+
+- `profilePlot`: one subplot per `(theta_i, theta_j)` pair (previously all
+  contours were drawn into a single axes and overlapped for >2 parameters).
+- `prepTreeTheta`: no longer crashes on parameter-free classes with a stale
+  stored theta (`maximum []`).
+- `profile-data` sections are selected by header, so a missing section cannot
+  shift the profile/contour parsing.
+- 1-parameter models can be profiled (`profile-data` parameter guard relaxed).
+
+### CI command wiring
+
+- `top`/`pareto`/`top-pattern` accept `with ci [data FILE]`; the session loss
+  is threaded into the CI computation and mapped to a distribution.
+- `report`/`optimize` strip the `with`/`ci` tokens before reading the loss.
+
+- Requires `srtree >= 3.0.0.6` and `srtree-db >= 0.1.3.3`.
+
 ## 2.4.0
 
 ### Split-DB Architecture Fixes
