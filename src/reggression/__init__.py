@@ -5,6 +5,7 @@ from typing import Iterator, List
 from io import StringIO
 
 import csv
+import ctypes
 import os
 import tempfile
 
@@ -28,7 +29,36 @@ from ._binding import (
     unsafe_hs_reggression_exit,
 )
 
-VERSION: str = "2.4.1"
+def _preload_peer_ffi(pkg_name: str) -> None:
+    """Best-effort load a sibling package's GHC shared library.
+
+    GHC hosts a single RTS per process and does not safely support a Haskell
+    shared library being dlopen'd *after* the RTS has been initialized/used
+    (e.g. importing ``eggp`` after a reggression query). Loading the peer
+    binding here keeps both Haskell libraries mapped before the first Haskell
+    call, independent of Python import order.
+    """
+    try:
+        import glob
+        import importlib.util
+        spec = importlib.util.find_spec(pkg_name)
+        if spec is None or not spec.origin:
+            return
+        pkg_dir = os.path.dirname(spec.origin)
+        for pattern in ("_binding*.so", "_binding*.dylib", "_binding*.pyd"):
+            for path in glob.glob(os.path.join(pkg_dir, pattern)):
+                try:
+                    ctypes.CDLL(path, mode=getattr(ctypes, "RTLD_GLOBAL", 0))
+                    return
+                except OSError:
+                    continue
+    except Exception:
+        return
+
+
+_preload_peer_ffi("eggp")
+
+VERSION: str = "2.5.0"
 
 
 _hs_rts_init: bool = False
@@ -502,6 +532,28 @@ class Reggression():
         if "Name" in df.columns:
             df["Name"] = df["Name"].astype(str)
         return df
+
+    def getENodeInfo(self, eid):
+        ''' List the e-nodes inside an e-class.
+
+        Parameters
+        ----------
+        eid : int
+            E-class id to inspect.
+
+        Returns
+        -------
+        pd.DataFrame with columns:
+            Symbol : str
+                String representation of the operator or terminal, e.g. "+",
+                "Sin", "x0", "t1", "3.14".
+            Arity : int
+                Number of children of the e-node (operand occurrences for
+                flattened Add/Mul nodes).
+            Cost : int
+                Cost of the e-node's subtree under the default cost function.
+        '''
+        return self.runQuery(f"getENodeInfo {self._dbSpec()} {self.dataset_name} {eid}")
 
     def save(self, fname):
         ''' Save the e-graph file

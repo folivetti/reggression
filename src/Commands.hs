@@ -117,6 +117,7 @@ data Command  = Top Int Filter Criteria PatStr Bool
                 | DBGetNExprs String String String Int Int        -- fname _fitPath ds n eid
                 | DBGetNEclasses String String String Int Int     -- fname _fitPath ds n eid
                 | DBEClassTerminals String String String Int      -- fname _fitPath ds eid
+                | DBENodeInfo String String String Int            -- fname _fitPath ds eid
                 | DBTopPattern String String String Int String Bool Bool (Maybe String) Loss
                   -- fname fitPath ds n pattern isRoot negate ci loss
                 | DBDistribution String String String Int   -- fname fitPath ds n (top-N bounded)
@@ -1407,6 +1408,27 @@ run (DBEClassTerminals fname fitPath ds eid) = do
   let rows = map (\(typ, name) -> typ <> "," <> name) terminals
   pure . SimpleStr $ intercalate "\n" ("Type,Name" : rows)
 
+-- | DB-native e-node info: list every e-node in a class as (symbol, arity, cost).
+run (DBENodeInfo fname fitPath ds eid) = do
+  minfo <- liftIO $ withBackend fname $ \db -> do
+    eid' <- canonicalEidDB db eid
+    mPage <- readPage db eid'
+    case mPage of
+      Nothing -> pure Nothing
+      Just page -> do
+        let ec = decode page :: EClass
+            nodes = Set.toList (_eNodes ec)
+        infos <- foldM (\(acc, memo) en -> do
+                          (c, memo') <- enodeCost db IntSet.empty memo 0 en
+                          pure ((enodeSymbol en, enodeArity en, c) : acc, memo'))
+                       ([], IntMap.empty) nodes
+        pure . Just . reverse $ fst infos
+  case minfo of
+    Nothing -> pure . SimpleStr $ "e-class " <> show eid <> " not found"
+    Just infos -> do
+      let rows = [ sym <> "," <> show ar <> "," <> show c | (sym, ar, c) <- infos ]
+      pure . SimpleStr $ intercalate "\n" ("Symbol,Arity,Cost" : rows)
+
 -- | DB-native top with pattern matching: memory-bounded approach.
 -- 1. Query top M candidates by fitness from dataset_fit (M >> N)
 -- 2. For each candidate, load its best-expression tree and check pattern match
@@ -1750,6 +1772,96 @@ run (DBDistTokens fname fitPath ds n) = do
 -- | Helper: add tuples element-wise
 addTuple :: (Int, Double) -> (Int, Double) -> (Int, Double)
 addTuple (a, b) (c, d) = (a + c, b + d)
+
+-- | Human-readable symbol for an e-node.
+enodeSymbol :: ENode -> String
+enodeSymbol (EVar ix)       = 'x' : show ix
+enodeSymbol (EParam ix)     = 't' : show ix
+enodeSymbol (EConst x)      = show x
+enodeSymbol (EUni f _)      = show f
+enodeSymbol (EBin op _ _)   = showOp op
+enodeSymbol (ENAry op _)    = showOp (toOp op)
+
+-- | Number of children of an e-node (operand occurrences for ENAry).
+enodeArity :: ENode -> Int
+enodeArity (EVar _)      = 0
+enodeArity (EParam _)    = 0
+enodeArity (EConst _)    = 0
+enodeArity (EUni _ _)    = 1
+enodeArity (EBin _ _ _)  = 2
+enodeArity (ENAry _ m)   = sum (IntMap.elems m)
+
+-- | Local cost of an e-node under the default cost function, with placeholder
+-- children (the child costs are added by 'enodeCost').
+enodeLocalCost :: ENode -> Int
+enodeLocalCost (EVar ix)       = myCost (Var ix)
+enodeLocalCost (EParam ix)     = myCost (Param ix)
+enodeLocalCost (EConst x)      = myCost (Const x)
+enodeLocalCost (EUni f _)      = myCost (Uni f 0)
+enodeLocalCost (EBin op _ _)   = myCost (Bin op 0 0)
+enodeLocalCost (ENAry op _)    = myCost (Bin (toOp op) 0 0)
+
+-- | Total cost of an e-node: its local cost plus the best costs of its
+-- children. Stored class costs are reused when available; otherwise the cost
+-- is computed recursively from the class's best e-node.
+enodeCost :: SqlBackend db => db -> IntSet.IntSet -> IntMap.IntMap Int -> Int -> ENode -> IO (Int, IntMap.IntMap Int)
+enodeCost db seen memo depth en =
+  case en of
+    EVar _     -> pure (local, memo)
+    EParam _   -> pure (local, memo)
+    EConst _   -> pure (local, memo)
+    EUni _ t   -> do
+      (ct, memo') <- classCost db seen memo depth t
+      pure (local + ct, memo')
+    EBin _ l r -> do
+      (cl, memo1) <- classCost db seen memo depth l
+      (cr, memo2) <- classCost db seen memo1 depth r
+      pure (local + cl + cr, memo2)
+    ENAry _ m -> do
+      (total, memo') <- foldM (\(acc, mm) (cid, cnt) -> do
+                                 (c, mm') <- classCost db seen mm depth cid
+                                 pure (acc + c * cnt, mm'))
+                              (0, memo) (IntMap.toList m)
+      pure (local + total, memo')
+  where
+    local = enodeLocalCost en
+
+classCost :: SqlBackend db => db -> IntSet.IntSet -> IntMap.IntMap Int -> Int -> EClassId -> IO (Int, IntMap.IntMap Int)
+classCost db seen memo depth eid
+  | depth >= 200 = pure (0, memo)
+  | IntSet.member eid seen = pure (0, memo)
+  | Just c <- IntMap.lookup eid memo = pure (c, memo)
+  | otherwise = do
+      eid' <- canonicalEidDB db eid
+      if eid' /= eid
+        then do
+          (c, memo') <- classCost db seen memo depth eid'
+          pure (c, IntMap.insert eid c memo')
+        else do
+          mPage <- readPage db eid
+          case mPage of
+            Nothing -> pure (0, memo)
+            Just page -> do
+              let ec = decode page :: EClass
+                  stored = _cost (_info ec)
+              if stored > 0
+                then pure (stored, IntMap.insert eid stored memo)
+                else do
+                  (c, memo') <- enodeCost db (IntSet.insert eid seen) memo (depth + 1) (_best (_info ec))
+                  pure (c, IntMap.insert eid c memo')
+
+-- | Resolve an e-class id to its canonical root (bounded chain walk).
+canonicalEidDB :: SqlBackend db => db -> EClassId -> IO EClassId
+canonicalEidDB db = go (0 :: Int)
+  where
+    go k eid
+      | k >= 16 = pure eid
+      | otherwise = do
+          rows <- queryDb db "SELECT canonical FROM eclass WHERE eid = ?"
+                    [SqlInteger (fromIntegral eid)]
+          case rows of
+            [[c]] | sqlToInt c /= eid -> go (k + 1) (sqlToInt c)
+            _                         -> pure eid
 
 -- | Max N cap for bounded DB-native commands
 maxBoundedN :: Int

@@ -61,6 +61,13 @@ void unsafe_py_write_stderr( char * str) {
   free((char *) $2);
 }
 
+/* The Haskell side returns a C string allocated with newCString (malloc).
+   SWIG copies it into a Python str, so without %newobject the allocation
+   leaks on every call (every reggression_run allocates the whole result). */
+%typemap(newfree) char * "free($1);"
+%newobject unsafe_hs_reggression_version;
+%newobject unsafe_hs_reggression_run;
+
 char * unsafe_hs_reggression_version();
 int unsafe_hs_reggression_main();
 char * unsafe_hs_reggression_run(char * myCmd, char *dataset, char *testData, char *loss, char *loadFrom, char *dumpTo,  char *parseCSV, int parseParams, int calcDL, int calcFit, char *varnames);

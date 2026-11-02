@@ -204,6 +204,11 @@ eclassTerminalsCmd varnames (fname:ds:eid:_) = case readMaybe @Int eid of
     Just n  -> let (f, fp) = splitColon fname in run (DBEClassTerminals f fp ds n) >>= printFun varnames [] [] (NLL Gaussian)
 eclassTerminalsCmd varnames _ = helpCmd ["eclass-terminals"]
 
+enodeInfoCmd varnames (fname:ds:eid:_) = case readMaybe @Int eid of
+    Nothing -> pure "The id must be an integer."
+    Just n  -> let (f, fp) = splitColon fname in run (DBENodeInfo f fp ds n) >>= printFun varnames [] [] (NLL Gaussian)
+enodeInfoCmd varnames _ = helpCmd ["getENodeInfo"]
+
 topPatternCmd varnames loss (fname:ds:n:rest) = case readMaybe @Int n of
     Nothing -> pure "The n must be an integer."
     Just k  -> let (f, fp) = splitColon fname
@@ -260,7 +265,7 @@ predictionDataCmd varnames loss (fname:ds:eid:dataPath:_) = case readMaybe @Int 
     Just n  -> let (f, fp) = splitColon fname in run (DBPredictionData f fp ds n dataPath loss) >>= printFun varnames [] [] (NLL Gaussian)
 predictionDataCmd varnames _ _ = helpCmd ["prediction-data"]
 
-commands = ["help", "top", "distribution", "distribution-pattern", "count", "modularity", "pareto", "report", "optimize", "eqsat", "eqsat-frontier", "insert", "set-fit", "stream", "push-fit", "refresh-fitness", "subtrees", "getNExprs", "getNEclasses", "eclass-terminals", "top-pattern", "count-pattern", "pattern-map", "extract-pattern", "distribution-tokens", "profile-data", "prediction-data", "load", "import", "persist"]
+commands = ["help", "top", "distribution", "distribution-pattern", "count", "modularity", "pareto", "report", "optimize", "eqsat", "eqsat-frontier", "insert", "set-fit", "stream", "push-fit", "refresh-fitness", "subtrees", "getNExprs", "getNEclasses", "eclass-terminals", "getENodeInfo", "top-pattern", "count-pattern", "pattern-map", "extract-pattern", "distribution-tokens", "profile-data", "prediction-data", "load", "import", "persist"]
 
 topHlp = "top FILE DATASET N [with ci [data FILE]]: top-N e-classes by fitness from the SQLite database FILE. With ci, appends profile-likelihood CIs for the parameters (requires the data FILE)."
 
@@ -291,6 +296,7 @@ hlpMap = Map.fromList $ Prelude.zip commands
                             , "getNExprs FILE DATASET N EID: get up to N equivalent expressions from e-class EID in the SQLite database FILE."
                             , "getNEclasses FILE DATASET N EID: get e-class ID sets for up to N expression variants from EID in the SQLite database FILE."
                             , "eclass-terminals FILE DATASET EID: list all unique terminals inside e-class EID from the SQLite database FILE."
+                            , "getENodeInfo FILE DATASET EID: list the e-nodes of e-class EID as (symbol, arity, cost) from the SQLite database FILE."
                             , "top-pattern FILE DATASET N PATTERN [root] [not] [ci [data FILE]]: top-N expressions matching PATTERN, with wildcard bindings (v0, v1, ...)."
                             , "count-pattern FILE DATASET PATTERN N: count structural pattern matches in top-N expressions from the SQLite database FILE."
                             , "pattern-map FILE DATASET PATTERN N: show wildcard bindings (v0, v1, ...) for each match of PATTERN in top-N expressions."
@@ -340,6 +346,7 @@ reggressionDB myCmd dataset lossStr varnames = do
              , getNExprsCmd varnames
              , getNEclassesCmd varnames
              , eclassTerminalsCmd varnames
+             , enodeInfoCmd varnames
              , topPatternCmd varnames loss
              , countPatCmd varnames
              , patternMapCmd varnames

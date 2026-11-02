@@ -1,5 +1,27 @@
 # Changelog for reggression
 
+## 2.5.0
+
+### New Features
+
+- New `getENodeInfo(eid)` Python method and `getENodeInfo` command: list every
+  e-node of a class as `(Symbol, Arity, Cost)` from the SQLite database. Costs
+  reuse stored class costs when available and otherwise recurse through each
+  class's best e-node, with cycle/depth guards.
+
+### Fixes
+
+- **Avoid intermittent GHC crashes when both FFI bindings are used**: importing
+  `eggp` after a reggression query could abort the process (`ARR_WORDS object
+  entered` / SIGSEGV), because GHC supports only one RTS per process and the
+  second `_binding` was `dlopen`'d after the RTS had run. `reggression` now
+  best-effort preloads the sibling package's shared library at import time
+  (`_preload_peer_ffi`), making the Python import order irrelevant.
+- **Fixed a memory leak in the SWIG binding**: strings returned by
+  `unsafe_hs_reggression_version` / `unsafe_hs_reggression_run` are now freed
+  after SWIG copies them (`%newobject` / `newfree` typemap), instead of leaking
+  the whole result buffer on every call.
+
 ## 2.4.1
 
 ### Profile-likelihood prediction intervals
