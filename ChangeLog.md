@@ -1,5 +1,31 @@
 # Changelog for reggression
 
+## 2.5.1
+
+### Split-DB fixes
+
+- `persist`, `load`, `push-fit`, `refresh-fitness`, `eqsat`,
+  `eqsat-frontier`, and `insert` now honor a separate `fitPath` and use the
+  structure-only load/save APIs (`loadGraphLazyNoFit`, `saveGraphStructure`,
+  `pushFitSplit`) when the fit DB is a different file.
+- Fit-DB access uses `getOrCreateDatasetFit`, so fit DBs no longer gain egraph
+  structure tables.
+
+### Pattern extraction
+
+- New DB-native `pattern-instances` command and Python
+  `Reggression.patternInstances(...)`: enumerate
+  `(RootId, RootExpression, RootSize, Pattern, PatternSize, PatternCount)` rows
+  for a roots file, top-N roots, or all canonical e-classes.
+- New `getAllPatternsOnTreeBounded`: prunes patterns larger than `maxSize`
+  during enumeration, avoiding combinatorial memory blowups on large or
+  repetitive trees. `pattern-instances` supports both `minSize` and `maxSize`.
+- New `patternToString` pretty-printer; `distribution-pattern` and
+  `extract-pattern` now print `x0 + v0`-style patterns instead of constructor
+  syntax. Parameters are canonicalised with `relabelParams` before pattern
+  enumeration.
+- Requires `srtree-db >= 0.1.4.0`.
+
 ## 2.5.0
 
 ### New Features

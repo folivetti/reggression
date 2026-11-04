@@ -53,12 +53,14 @@ import qualified Data.Set as SSet
 
 import Foreign.C (CInt (..), CDouble (..))
 import Foreign.C.String (CString, newCString, withCString, peekCString, peekCAString, newCAString)
+import Foreign.Ptr (Ptr)
+import Foreign.Storable (poke)
 import Paths_reggression (version)
 import System.Environment (getArgs)
 import System.Exit (ExitCode (..))
 import Text.Read (readMaybe)
 import Data.Version (showVersion)
-import Control.Exception (Exception (..), SomeException (..), handle)
+import Control.Exception (AsyncException, Exception (..), SomeException (..), fromException, handle, throwIO, try)
 import System.IO
 
 import CLI
@@ -112,3 +114,19 @@ hs_reggression_run myCmd dataset testData loss loadFrom dumpTo parseCSV parsePar
   varnames <- splitOn "," <$> peekCString varnames'
   out  <- reggression myCmd' dataset' testData' loss' loadFrom' dumpTo' parseCSV' (parseParams' /= 0) (calcDL' /= 0) (calcFit' /= 0) varnames
   newCString out
+
+-- | Host-safe variant of 'hs_reggression_run': uncaught synchronous Haskell
+-- exceptions are returned as an error string (status = 1) instead of
+-- unwinding across the C ABI and terminating the host process.  Async
+-- exceptions (Ctrl-C) are rethrown.
+foreign export ccall hs_reggression_run_safe :: CString -> CString -> CString -> CString -> CString -> CString -> CString -> CInt -> CInt -> CInt -> CString -> Ptr CInt -> IO CString
+
+hs_reggression_run_safe :: CString -> CString -> CString -> CString -> CString -> CString -> CString -> CInt -> CInt -> CInt -> CString -> Ptr CInt -> IO CString
+hs_reggression_run_safe myCmd dataset testData loss loadFrom dumpTo parseCSV parseParams' calcDL' calcFit' varnames' status = do
+  r <- try @SomeException (hs_reggression_run myCmd dataset testData loss loadFrom dumpTo parseCSV parseParams' calcDL' calcFit' varnames')
+  case r of
+    Right out -> poke status 0 >> pure out
+    Left e ->
+      case fromException e :: Maybe AsyncException of
+        Just _  -> throwIO e
+        Nothing -> poke status 1 >> newCString (displayException e)

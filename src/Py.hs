@@ -128,6 +128,11 @@ eqSatFrontierCmd varnames _ = helpCmd ["eqsat-frontier"]
 insertCmd varnames (fname:ds:alg:args) = let (f, fp) = splitColon fname in run (DBInsert f fp ds alg (unwords args)) >>= printFun varnames [] [] (NLL Gaussian)
 insertCmd varnames _ = helpCmd ["insert"]
 
+-- | Insert and report whether the expression already existed: \"EID,1\"
+-- (existing) or \"EID,0\" (new). No fitting/evaluation is performed.
+insertCheckCmd varnames (fname:ds:alg:args) = let (f, fp) = splitColon fname in run (DBInsertCheck f fp ds alg (unwords args)) >>= printFun varnames [] [] (NLL Gaussian)
+insertCheckCmd varnames _ = helpCmd ["insert-check"]
+
 setFitCmd varnames (fname:ds:eid:fit:_) = case (readMaybe @Int eid, readMaybe @Double fit) of
     (Just e, Just f) -> let (fp, fp') = splitColon fname in run (DBSetFit fp fp' ds e f) >>= printFun varnames [] [] (NLL Gaussian)
     _                -> pure "set-fit requires EID FITNESS as numbers"
@@ -250,6 +255,15 @@ extractPatCmd varnames (fname:ds:eid:_) = case readMaybe @Int eid of
     Just n  -> let (f, fp) = splitColon fname in run (DBExtractPat f fp ds n) >>= printFun varnames [] [] (NLL Gaussian)
 extractPatCmd varnames _ = helpCmd ["extract-pattern"]
 
+patternInstancesCmd varnames (fname:ds:n:minSize:maxSize:rootsFile:_) =
+    case (readMaybe @Int n, readMaybe @Int minSize, readMaybe @Int maxSize) of
+      (Just k, Just ms, Just xs) ->
+        let (f, fp) = splitColon fname
+        in run (DBPatternInstances f fp ds k ms xs rootsFile)
+             >>= printFun varnames [] [] (NLL Gaussian)
+      _ -> helpCmd ["pattern-instances"]
+patternInstancesCmd varnames _ = helpCmd ["pattern-instances"]
+
 distTokensCmd varnames (fname:ds:n:_) = case readMaybe @Int n of
                                         Nothing -> pure "The n must be an integer."
                                         Just k  -> let (f, fp) = splitColon fname in run (DBDistTokens f fp ds k) >>= printFun varnames [] [] (NLL Gaussian)
@@ -265,7 +279,7 @@ predictionDataCmd varnames loss (fname:ds:eid:dataPath:_) = case readMaybe @Int 
     Just n  -> let (f, fp) = splitColon fname in run (DBPredictionData f fp ds n dataPath loss) >>= printFun varnames [] [] (NLL Gaussian)
 predictionDataCmd varnames _ _ = helpCmd ["prediction-data"]
 
-commands = ["help", "top", "distribution", "distribution-pattern", "count", "modularity", "pareto", "report", "optimize", "eqsat", "eqsat-frontier", "insert", "set-fit", "stream", "push-fit", "refresh-fitness", "subtrees", "getNExprs", "getNEclasses", "eclass-terminals", "getENodeInfo", "top-pattern", "count-pattern", "pattern-map", "extract-pattern", "distribution-tokens", "profile-data", "prediction-data", "load", "import", "persist"]
+commands = ["help", "top", "distribution", "distribution-pattern", "count", "modularity", "pareto", "report", "optimize", "eqsat", "eqsat-frontier", "insert", "insert-check", "set-fit", "stream", "push-fit", "refresh-fitness", "subtrees", "getNExprs", "getNEclasses", "eclass-terminals", "getENodeInfo", "top-pattern", "count-pattern", "pattern-map", "extract-pattern", "pattern-instances", "distribution-tokens", "profile-data", "prediction-data", "load", "import", "persist"]
 
 topHlp = "top FILE DATASET N [with ci [data FILE]]: top-N e-classes by fitness from the SQLite database FILE. With ci, appends profile-likelihood CIs for the parameters (requires the data FILE)."
 
@@ -288,6 +302,7 @@ hlpMap = Map.fromList $ Prelude.zip commands
                             , "eqsat FILE DATASET ITER [RULES]: run ITER equality-saturation iterations out-of-core against the lazily loaded e-graph in SQLite FILE."
                             , "eqsat-frontier FILE DATASET ITER [RULES]: re-saturate only the frontier of a lazily loaded e-graph in SQLite FILE."
                             , "insert FILE DATASET EXPR: insert a single expression into the DB-backed e-graph in FILE."
+                            , "insert-check FILE DATASET EXPR: like insert, but returns \"EID,1\" if the expression already existed or \"EID,0\" if it was new (no fitting)."
                             , "set-fit FILE DATASET EID FITNESS: record the fitness of e-class EID in the fit database."
                             , "stream FILE OP N: stream the enode table by operator through a SQLite cursor, report count and first N matches."
                             , "push-fit FILE DATASET: write fitness/DL metrics into the fit table of the SQLite database FILE."
@@ -301,6 +316,7 @@ hlpMap = Map.fromList $ Prelude.zip commands
                             , "count-pattern FILE DATASET PATTERN N: count structural pattern matches in top-N expressions from the SQLite database FILE."
                             , "pattern-map FILE DATASET PATTERN N: show wildcard bindings (v0, v1, ...) for each match of PATTERN in top-N expressions."
                             , "extract-pattern FILE DATASET EID: enumerate patterns in a single expression from the SQLite database FILE."
+                            , "pattern-instances FILE DATASET N MINSIZE MAXSIZE ROOTSFILE: enumerate root/pattern instances for many e-classes from the SQLite database FILE. ROOTSFILE contains one e-id per line (- = none); N > 0 selects the top-N roots from DATASET when no roots file is given, N = 0 selects all canonical e-classes; MAXSIZE <= 0 means no maximum pattern size."
                             , "distribution-tokens FILE DATASET N: count token frequencies in top-N expressions from the SQLite database FILE."
                             , "profile-data FILE DATASET EID DATAFILE: compute profile-likelihood data (taus, thetas, contours) for e-class EID using DATAFILE and the session loss."
                             , "prediction-data FILE DATASET EID DATAFILE: compute the profile-likelihood 95% prediction interval (x0 varied, other variables at their mean) for e-class EID using DATAFILE and the session loss."
@@ -338,6 +354,7 @@ reggressionDB myCmd dataset lossStr varnames = do
              , eqSatCmd varnames
              , eqSatFrontierCmd varnames
              , insertCmd varnames
+             , insertCheckCmd varnames
              , setFitCmd varnames
              , streamCmd varnames
              , pushFitCmd varnames
@@ -351,6 +368,7 @@ reggressionDB myCmd dataset lossStr varnames = do
              , countPatCmd varnames
              , patternMapCmd varnames
              , extractPatCmd varnames
+             , patternInstancesCmd varnames
              , distTokensCmd varnames
              , profileDataCmd varnames loss
              , predictionDataCmd varnames loss

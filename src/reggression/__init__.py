@@ -58,7 +58,7 @@ def _preload_peer_ffi(pkg_name: str) -> None:
 
 _preload_peer_ffi("eggp")
 
-VERSION: str = "2.5.0"
+VERSION: str = "2.5.1"
 
 
 _hs_rts_init: bool = False
@@ -470,6 +470,40 @@ class Reggression():
             e-class id of the expression.
         '''
         return self.runQuery(f"extract-pattern {self._dbSpec()} {self.dataset_name} {eid}")
+
+    def patternInstances(self, fname="", fitDb="", dataset="", n=0, minSize=2, maxSize=10, rootsFile="-"):
+        '''Enumerate (root e-class, pattern) instances for many e-classes.
+
+        Returns a CSV string with columns
+        ``RootId,RootExpression,RootSize,Pattern,PatternSize,PatternCount``.
+        Patterns are enumerated from the best expression of each root with the
+        same semantics as :meth:`extractPattern`.
+
+        Parameters
+        ----------
+        fname : str, default=""
+            E-graph database. If empty, uses ``self.db``.
+        fitDb : str, default=""
+            Fit database, used only when ``n > 0`` and no roots file is given.
+        dataset : str, default=""
+            Dataset name for the top-N selection (default: session dataset).
+        n : int, default=0
+            If ``rootsFile`` is not given: ``n > 0`` selects the top-N roots by
+            fitness from ``fitDb``; ``n = 0`` selects every canonical e-class.
+        minSize : int, default=2
+            Minimum structural pattern size (``lenPat``).
+        maxSize : int, default=10
+            Maximum structural pattern size. ``0`` means no maximum.
+        rootsFile : str, default="-"
+            File with one root e-id per line. ``"-"`` means no roots file.
+        '''
+        db = fname or self.db
+        fd = fitDb or self.fitDb
+        dbSpec = f"{db}:{fd}" if fd else db
+        ds = dataset or self.dataset_name
+        return self.runQuery(
+            f"pattern-instances {dbSpec} {ds} {n} {minSize} {maxSize} {rootsFile}",
+            df=False)
     def distributionOfTokens(self, top=-1):
         ''' Return the counts and average fitness of tokens.
 

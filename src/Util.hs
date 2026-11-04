@@ -288,37 +288,30 @@ printsimpleTreeCLI t' = do
   let t = relabelParams t'
   pure $ colsAllG center [[show 1], justifyText 50 $ showExpr t]
 
-printCounts (pat, (cnt, avgfit)) = do
-  let spat = showPat pat
-  pure $ intercalate "," [spat, show cnt, show avgfit]
+-- | Pretty-print a structural pattern (e.g. @(x0 + v0)@).
+patternToString :: Pattern -> String
+patternToString = go
   where
-    showPat (Fixed (Var ix)) = 'x' : show ix
-    showPat (Fixed (Param ix)) = 't' : show ix
-    showPat (Fixed (Const x))  = show x
-    showPat (Fixed (Bin op l r)) = concat ["(", showPat l, " ", showOp op, " ", showPat r, ")"]
-    showPat (Fixed (Uni f t)) = concat [show f, "(", showPat t, ")"]
-    showPat (VarPat ix) = 'v' : show (fromEnum ix-65)
-    showPat (NAry op ncs) = "(" <> intercalate (" " <> showOp (toOp op) <> " ") (Prelude.map showNChild ncs) <> ")"
-    showPat Hole          = "_"
-    showNChild (Ch p)     = showPat p
-    showNChild (Rest c)   = 'v' : show (fromEnum c-65)
-    showNChild (MapP p _) = showPat p
+    go (Fixed (Var ix))     = 'x' : show ix
+    go (Fixed (Param ix))   = 't' : show ix
+    go (Fixed (Const x))    = show x
+    go (Fixed (Bin op l r)) = concat ["(", go l, " ", showOp op, " ", go r, ")"]
+    go (Fixed (Uni f t))    = concat [show f, "(", go t, ")"]
+    go (Fixed t)            = show t
+    go (VarPat ix)          = 'v' : show (fromEnum ix - 65)
+    go (NAry op ncs)        = "(" <> intercalate (" " <> showOp (toOp op) <> " ") (Prelude.map showNChild ncs) <> ")"
+    go Hole                 = "_"
+    showNChild (Ch p)       = go p
+    showNChild (Rest c)     = 'v' : show (fromEnum c - 65)
+    showNChild (MapP p _)   = go p
+
+printCounts (pat, (cnt, avgfit)) = do
+  let spat = patternToString pat
+  pure $ intercalate "," [spat, show cnt, show avgfit]
 
 printCountsCLI (pat, (cnt, avgfit)) = do
-  let spat = showPat pat
+  let spat = patternToString pat
   pure $ colsAllG center [justifyText 50 spat, [show cnt], [printf "%.4e" avgfit]]
-  where
-    showPat (Fixed (Var ix)) = 'x' : show ix
-    showPat (Fixed (Param ix)) = 't' : show ix
-    showPat (Fixed (Const x))  = show x
-    showPat (Fixed (Bin op l r)) = concat ["(", showPat l, " ", showOp op, " ", showPat r, ")"]
-    showPat (Fixed (Uni f t)) = concat [show f, "(", showPat t, ")"]
-    showPat (VarPat ix) = 'v' : show (fromEnum ix-65)
-    showPat (NAry op ncs) = "(" <> intercalate (" " <> showOp (toOp op) <> " ") (Prelude.map showNChild ncs) <> ")"
-    showPat Hole          = "_"
-    showNChild (Ch p)     = showPat p
-    showNChild (Rest c)   = 'v' : show (fromEnum c-65)
-    showNChild (MapP p _) = showPat p
 
 --printSimpleMultiExprs varnames eids =
 --  do rows <- forM (nub eids) (uncurry (printsimpleExpr varnames))

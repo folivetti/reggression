@@ -1,0 +1,6 @@
+EXPORTS
+  reggression_init
+  reggression_exit
+  reggression_version
+  reggression_run
+  reggression_free

@@ -68,7 +68,7 @@ import qualified Data.ByteString.Lazy as BS
 
 import Database.SQLite3 ( Database, open, close )
 import Database.PostgreSQL.LibPQ ( Connection, connectdb, finish )
-import Algorithm.EqSat.Storage.SQLite ( saveGraph, loadGraphLazy, emptyPagedGraph, pushFit, refreshFitness, flushStore, createSchema, createSchemaFit )
+import Algorithm.EqSat.Storage.SQLite ( saveGraph, saveGraphStructure, loadGraphLazy, loadGraphLazyNoFit, emptyPagedGraph, pushFitFit, pushFitSplit, refreshFitness, flushStore, createSchema, createSchemaStructure, createSchemaFit )
 import Algorithm.EqSat.Storage.Postgres ()
 import Algorithm.EqSat.Storage.Backend ( SqlBackend, queryDb, runDb, SqlValue(..), sqlToText, sqlToInt, sqlToMaybeDouble )
 import Algorithm.EqSat.Storage.Import (importEqs, ImportSummary(..), recordExpressionIndex)
@@ -109,6 +109,8 @@ data Command  = Top Int Filter Criteria PatStr Bool
                 | DBEqSat String String String Int String
                 | DBEqSatFrontier String String String Int String
                 | DBInsert String String String String String
+                | DBInsertCheck String String String String String
+                  -- fname fitPath ds alg expr; returns "eid,existed(0|1)"
                 | DBSetFit String String String Int Double
                 | DBStream String String String Int
                 | DBReport String String String String String Int Bool String -- fname fitPath ds trainPath testPath eid ci lossName
@@ -125,6 +127,8 @@ data Command  = Top Int Filter Criteria PatStr Bool
                 | DBCountPat String String String String Int -- fname fitPath ds pattern n
                 | DBPatternMap String String String String Int -- fname fitPath ds pattern n
                 | DBExtractPat String String String Int     -- fname fitPath ds eid
+                | DBPatternInstances String String String Int Int Int String
+                  -- fname fitPath ds n minSize maxSize rootsFile ("-" = none)
                 | DBDistTokens String String String Int     -- fname fitPath ds n
                 | DBProfileData String String String Int String Loss  -- fname fitPath ds eid dataPath loss
                 | DBPredictionData String String String Int String Loss -- fname fitPath ds eid dataPath loss
@@ -589,6 +593,15 @@ ciCells :: Int -> [(Double, Double)] -> [String]
 ciCells nP pairs =
   concat [ [show l, show h] | (l, h) <- pairs ] <> Prelude.replicate (2 * (nP - length pairs)) ""
 
+-- | Effective fit DB path. An empty argument means legacy combined mode: fit
+-- lives in the egraph DB itself.
+effectiveFitPath :: String -> String -> String
+effectiveFitPath fname fitPath = if null fitPath then fname else fitPath
+
+-- | Whether the fit data lives in a different DB from the structure.
+isSplitPath :: String -> String -> Bool
+isSplitPath fname fitPath = not (null fitPath) && fitPath /= fname
+
 run (Top n filters criteria NoPat ci) = do
    let getFun = if criteria == ByFitness then getTopFitEClassThat else getTopDLEClassThat
    ids <- getFun n filters
@@ -720,12 +733,26 @@ run (Load fname) = do
 
 run (Persist fname fitPath ds) = do
   eg <- get
-  r  <- liftIO $ withBackend fname $ \db -> do
-         dsid <- Q.getOrCreateDataset db ds
-         saveGraph db dsid eg
+  let fp = effectiveFitPath fname fitPath
+  r  <- liftIO $
+    if not (isSplitPath fname fitPath)
+      then withBackend fname $ \db -> do
+             dsid <- Q.getOrCreateDataset db ds
+             saveGraph db dsid eg
+      else
+        withBackend fname $ \egdb ->
+          withBackend fp $ \fitdb -> do
+            re <- saveGraphStructure egdb eg
+            case re of
+              Left err -> pure (Left err)
+              Right () -> do
+                dsid <- Q.getOrCreateDatasetFit fitdb ds
+                pushFitSplit egdb fitdb dsid eg
+                pure (Right ())
   pure . SimpleStr $ case r of
     Left err -> "persist failed: " <> err
     Right () -> "e-graph persisted to " <> fname
+                  <> (if isSplitPath fname fitPath then " (fit: " <> fp <> ")" else "")
 
 run (LoadDB fname fitPath ds) = do
   -- NB: keep the DB connection alive.  loadGraphLazy builds a paged
@@ -736,9 +763,18 @@ run (LoadDB fname fitPath ds) = do
   -- bracketOnError closes only on failure; on success the connection is owned
   -- by the e-graph (via '_classStore') and is finalised when the graph is
   -- replaced/GC'd.
-  r <- liftIO $ withBackendKeepOpen fname $ \db -> do
-         dsid <- Q.getOrCreateDataset db ds
-         loadGraphLazy db dsid 50000 100000 100000
+  let fp = effectiveFitPath fname fitPath
+  r <- liftIO $ withBackendKeepOpen fname $ \db ->
+         if not (isSplitPath fname fitPath)
+           then do dsid <- Q.getOrCreateDataset db ds
+                   loadGraphLazy db dsid 50000 100000 100000
+           else do
+             er <- loadGraphLazyNoFit db 50000 100000 100000
+             case er of
+               Left err -> pure (Left err)
+               Right eg -> withBackend fp $ \fitDb -> do
+                 dsid <- Q.getOrCreateDatasetFit fitDb ds
+                 refreshFitness fitDb dsid eg
   case r of
     Left err -> pure . SimpleStr $ "db-load failed: " <> err
     Right eg -> do
@@ -750,7 +786,8 @@ run (LoadDB fname fitPath ds) = do
       -- class through the paged store and stays memory-bounded.
       recalculateBestAllStream myCost
       flushGraphStore
-      pure (SimpleStr ("e-graph loaded from " <> fname))
+      pure (SimpleStr ("e-graph loaded from " <> fname
+                        <> (if isSplitPath fname fitPath then " (fit: " <> fp <> ")" else "")))
 
 run (DBTop fname fitPath ds n varnames rawFilters ci mData loss) = do
 
@@ -771,7 +808,7 @@ run (DBTop fname fitPath ds n varnames rawFilters ci mData loss) = do
 
   -- Get dataset ID and top-N from fit DB (with SQL filters if any)
   (dsid, top) <- liftIO $ withBackend fitPath $ \fitDb -> do
-    dsid <- Q.getOrCreateDataset fitDb ds
+    dsid <- Q.getOrCreateDatasetFit fitDb ds
     top  <- if null sqlFilters
             then Q.topN fitDb dsid fetchN
             else Q.topNFiltered fitDb dsid fetchN sqlFilters
@@ -891,7 +928,7 @@ run (DBPareto fname fitPath ds ci byFitness mData loss) = do
         else pure (Prelude.replicate (length eids) Nothing)
       thetaMap <- if ci && not (null eids)
         then liftIO $ withBackend fitPath $ \fitDb -> do
-          dsid <- Q.getOrCreateDataset fitDb ds
+          dsid <- Q.getOrCreateDatasetFit fitDb ds
           let inClause = "(" <> T.pack (intercalate "," (map show eids)) <> ")"
           thRows <- queryDb fitDb
             ("SELECT eid, theta FROM dataset_fit WHERE dataset_id = ? AND eid IN " <> inClause)
@@ -924,21 +961,28 @@ run (DBPareto fname fitPath ds ci byFitness mData loss) = do
 
 run (PushFit fname fitPath ds) = do
   eg <- get
-  liftIO $ withBackend fname $ \db -> do
-         dsid <- Q.getOrCreateDataset db ds
-         pushFit db dsid eg
-  pure . SimpleStr $ "dataset_fit table written to " <> fname
+  let fp = effectiveFitPath fname fitPath
+  if isSplitPath fname fitPath
+    then liftIO $ withBackend fname $ \egdb ->
+           withBackend fp $ \fitdb -> do
+             dsid <- Q.getOrCreateDatasetFit fitdb ds
+             pushFitSplit egdb fitdb dsid eg
+    else liftIO $ withBackend fp $ \db -> do
+           dsid <- Q.getOrCreateDatasetFit db ds
+           pushFitFit db dsid eg
+  pure . SimpleStr $ "dataset_fit table written to " <> fp
 
 run (RefreshFit fname fitPath ds) = do
   eg <- get
-  r  <- liftIO $ withBackend fname $ \db -> do
-         dsid <- Q.getOrCreateDataset db ds
+  let fp = effectiveFitPath fname fitPath
+  r  <- liftIO $ withBackend fp $ \db -> do
+         dsid <- Q.getOrCreateDatasetFit db ds
          refreshFitness db dsid eg
   case r of
     Left err -> pure . SimpleStr $ "db-refresh-fitness failed: " <> err
     Right eg' -> do put eg'
                     rebuildAllRanges
-                    pure (SimpleStr ("fitness refreshed from " <> fname))
+                    pure (SimpleStr ("fitness refreshed from " <> fp))
 
 -- | Run equality saturation entirely against a lazily loaded (out-of-core) graph.
 -- The e-graph stays paged: only the structural indexes are resident, every
@@ -948,9 +992,12 @@ run (DBEqSat fname fitPath ds iters rs) = do
   let rules = case rs of
                "params" -> rewritesParams
                _        -> rewrites
+      split = isSplitPath fname fitPath
   r <- liftIO $ withBackend fname $ \db -> do
-        dsid <- Q.getOrCreateDataset db ds
-        er <- loadGraphLazy db dsid 50000 100000 100000
+        er <- if split
+                then loadGraphLazyNoFit db 50000 100000 100000
+                else do dsid <- Q.getOrCreateDataset db ds
+                        loadGraphLazy db dsid 50000 100000 100000
         case er of
           Left err -> pure (Left err)
           Right eg -> do
@@ -959,12 +1006,18 @@ run (DBEqSat fname fitPath ds iters rs) = do
             let go g = execStateT (runEqSat myCost rules iters) g
             eg' <- go eg
             flushStore eg'
-            saveGraph db dsid eg'
-            -- a full pass re-saturated everything: clear any frontier marks
-            case _classStore eg' of
-              Nothing -> pure ()
-              Just h  -> liftIO (cpsEndFrontier h)
-            pure (Right ())
+            sr <- if split
+                    then saveGraphStructure db eg'
+                    else do dsid <- Q.getOrCreateDataset db ds
+                            saveGraph db dsid eg'
+            case sr of
+              Left err -> pure (Left ("saveGraph failed: " <> err))
+              Right () -> do
+                -- a full pass re-saturated everything: clear any frontier marks
+                case _classStore eg' of
+                  Nothing -> pure ()
+                  Just h  -> liftIO (cpsEndFrontier h)
+                pure (Right ())
   pure . SimpleStr $ case r of
     Left err -> "db-eqsat failed: " <> err
     Right () -> "db-eqsat applied " <> show iters <> " iteration(s) of '"
@@ -980,9 +1033,12 @@ run (DBEqSatFrontier fname fitPath ds iters rs) = do
   let rules = case rs of
                "params" -> rewritesParams
                _        -> rewrites
+      split = isSplitPath fname fitPath
   r <- liftIO $ withBackend fname $ \db -> do
-        dsid <- Q.getOrCreateDataset db ds
-        er <- loadGraphLazy db dsid 50000 100000 100000
+        er <- if split
+                then loadGraphLazyNoFit db 50000 100000 100000
+                else do dsid <- Q.getOrCreateDataset db ds
+                        loadGraphLazy db dsid 50000 100000 100000
         case er of
           Left err -> pure (Left err)
           Right eg -> case _classStore eg of
@@ -993,8 +1049,13 @@ run (DBEqSatFrontier fname fitPath ds iters rs) = do
               eg' <- execStateT (runEqSat myCost rules iters) eg
               liftIO (cpsEndFrontier h)
               flushStore eg'
-              saveGraph db dsid eg'
-              pure (Right n0)
+              sr <- if split
+                      then saveGraphStructure db eg'
+                      else do dsid <- Q.getOrCreateDataset db ds
+                              saveGraph db dsid eg'
+              pure $ case sr of
+                Left err -> Left ("saveGraph failed: " <> err)
+                Right () -> Right n0
   pure . SimpleStr $ case r of
     Left err -> "db-eqsat-frontier failed: " <> err
     Right n0 -> "db-eqsat-frontier re-saturated " <> show n0
@@ -1002,52 +1063,30 @@ run (DBEqSatFrontier fname fitPath ds iters rs) = do
                   <> " iteration(s) of '"
                   <> (if null rs then "default" else rs) <> "' on " <> fname
 
--- | Local eggp delta: insert a single expression into the DB-backed (paged)
--- graph. Its subgraph is written through (content-addressed: existing
--- subexpressions dedup against the live tables) and every genuinely-new class is
--- marked as part of the re-saturation frontier, so a later 'dbEqSatFrontier'
--- re-saturates only what changed. The root e-class id is returned (symmetric
--- with the in-memory 'insert') so the eggp loop can track / evaluate it, and the
--- expression is recorded in @expression_index@ (item: "was this seen?").
--- O(subgraph) work, O(1) memory.
+-- | Insert an expression (returns the root e-class id). See 'dbInsertImpl'.
 run (DBInsert fname fitPath ds alg expr) = do
-  let etree = parseSR (algToAlgs alg) "" False (B.pack expr)
-  r <- liftIO $ case etree of
-    Left _     -> pure (Left "no parse")
-    Right tree -> do
-      dsid <- withBackend fitPath $ \fitDb -> Q.getOrCreateDataset fitDb ds
-      withBackend fname $ \db -> do
-        -- ensure the egraph tables (enode, eclass_node, ...) exist on the egraph
-        -- DB. With a separate fit DB this is required before the first insert,
-        -- because node insertion dedupes against eclass_node.
-        createSchema db
-        er <- loadGraphLazy db dsid 50000 100000 100000
-        -- no e-graph stored yet: seed an empty paged graph so the first insert
-        -- works (subsequent inserts load the now-existing graph).
-        eg0 <- case er of
-          Left _  -> emptyPagedGraph db 50000 100000 100000
-          Right eg -> pure eg
-        case _classStore eg0 of
-          Nothing -> pure (Left "db-insert requires a paged graph")
-          Just _  -> do
-            (eid, eg') <- runStateT (fromTree myCost tree) eg0
-            flushStore eg'
-            saveGraph db dsid eg'
-            -- saveGraph creates the egraph schema, so the egraph DB now has the
-            -- eclass_node table recordExpressionIndex reads; the expression_index
-            -- row itself goes to the fit DB (which may be a separate file).
-            withBackend fitPath $ \fitDb -> recordExpressionIndex db fitDb dsid eid
-            pure (Right eid)
+  r <- dbInsertImpl fname fitPath ds alg expr
   pure . SimpleStr $ case r of
-    Left err  -> "db-insert failed: " <> err
-    Right eid -> show eid
+    Left err      -> "db-insert failed: " <> err
+    Right (eid,_) -> show eid
+
+-- | Like 'DBInsert', but also reports whether the expression already existed:
+-- \"EID,1\" when the root e-class was already in the graph, \"EID,0\" when it
+-- was created by this call. No fitting/evaluation is performed.
+run (DBInsertCheck fname fitPath ds alg expr) = do
+  r <- dbInsertImpl fname fitPath ds alg expr
+  pure . SimpleStr $ case r of
+    Left err -> "db-insert failed: " <> err
+    Right (eid, existed) ->
+      show eid <> "," <> (if existed then "1" else "0")
 
 -- | Set the fitness of a single e-class in @dataset_fit@, so a newly-inserted
 -- DB expression (see 'DBInsert') can be ranked by the query layer once the eggp
 -- loop has evaluated it. Writes only that class's row (structure untouched).
 run (DBSetFit fname fitPath ds eid fit) =
-  liftIO $ withBackend fitPath $ \db -> do
-    dsid <- Q.getOrCreateDataset db ds
+  let fp = effectiveFitPath fname fitPath
+  in liftIO $ withBackend fp $ \db -> do
+    dsid <- Q.getOrCreateDatasetFit db ds
     Q.writeDatasetFit db dsid eid (Just fit) Nothing "" 0
     pure (SimpleStr ("db-set-fit " <> show eid <> " <- " <> show fit))
 
@@ -1083,7 +1122,7 @@ run (DBReport fname fitPath ds trainPath testPath eid ci lossName) = do
 
   -- fitness + theta from the dataset's fit table
   (mFit, thetaText) <- liftIO $ withBackend fitPath $ \fitDb -> do
-    dsid <- Q.getOrCreateDataset fitDb ds
+    dsid <- Q.getOrCreateDatasetFit fitDb ds
     rows <- queryDb fitDb
       "SELECT fitness, dl, size, theta FROM dataset_fit WHERE dataset_id = ? AND eid = ?"
       [SqlInteger (fromIntegral dsid), SqlInteger (fromIntegral eid)]
@@ -1177,7 +1216,7 @@ run (DBProfileData fname fitPath ds eid dataPath loss) = do
     Just tree0 -> do
       -- Get theta from fit DB
       thetaText <- liftIO $ withBackend fitPath $ \fitDb -> do
-        dsid <- Q.getOrCreateDataset fitDb ds
+        dsid <- Q.getOrCreateDatasetFit fitDb ds
         rows <- queryDb fitDb
           "SELECT theta FROM dataset_fit WHERE dataset_id = ? AND eid = ?"
           [SqlInteger (fromIntegral dsid), SqlInteger (fromIntegral eid)]
@@ -1259,7 +1298,7 @@ run (DBPredictionData fname fitPath ds eid dataPath loss) = do
     Nothing -> pure . SimpleStr $ "extraction failed for e-class " <> show eid
     Just tree0 -> do
       thetaText <- liftIO $ withBackend fitPath $ \fitDb -> do
-        dsid <- Q.getOrCreateDataset fitDb ds
+        dsid <- Q.getOrCreateDatasetFit fitDb ds
         rows <- queryDb fitDb
           "SELECT theta FROM dataset_fit WHERE dataset_id = ? AND eid = ?"
           [SqlInteger (fromIntegral dsid), SqlInteger (fromIntegral eid)]
@@ -1355,7 +1394,7 @@ run (DBOptimize fname fitPath ds dataPath eid ci lossName) = do
           thetaText = T.pack (serializeTheta thetas)
       -- Write to dataset_fit
       liftIO $ withBackend fitPath $ \fitDb -> do
-        dsid <- Q.getOrCreateDataset fitDb ds
+        dsid <- Q.getOrCreateDatasetFit fitDb ds
         Q.writeDatasetFit fitDb dsid eid (Just fitness) Nothing thetaText 0
       pure $ SimpleStr ("optimized e-class " <> show eid <> ": fitness=" <> show fitness)
 
@@ -1445,7 +1484,7 @@ run (DBTopPattern fname fitPath ds n patStr isRoot negate ci loss) = do
       let multiplier = 10
           m = n * multiplier
       candidates <- liftIO $ withBackend fitPath $ \fitDb -> do
-        dsid <- Q.getOrCreateDataset fitDb ds
+        dsid <- Q.getOrCreateDatasetFit fitDb ds
         Q.topN fitDb dsid m
       -- 3. Check each candidate: extract its best tree and match against pattern
       matches <- liftIO $ withBackend fname $ \egDb ->
@@ -1474,7 +1513,7 @@ run (DBTopPattern fname fitPath ds n patStr isRoot negate ci loss) = do
         Nothing -> pure ([], Nothing)
         Just dataPath -> do
           tm <- liftIO $ withBackend fitPath $ \fitDb -> do
-            dsid <- Q.getOrCreateDataset fitDb ds
+            dsid <- Q.getOrCreateDatasetFit fitDb ds
             let eids = map (\(eid,_,_,_) -> eid) rows
                 inClause = "(" <> T.pack (intercalate "," (map show eids)) <> ")"
             thRows <- queryDb fitDb
@@ -1543,7 +1582,7 @@ run (ImportDB fname fitPath eqs ds dist varnames params) = do
     withBackend fname $ \egDb ->
       withBackend fitPath $ \fitDb -> do
         createSchemaFit fitDb
-        dsid <- Q.getOrCreateDataset fitDb ds
+        dsid <- Q.getOrCreateDatasetFit fitDb ds
         copyFitRows egDb dsid fitDb dsid
   pure . SimpleStr $ case r of
     Left err -> "db-import failed: " <> err
@@ -1652,18 +1691,18 @@ run (GetNEclass n eid) = do
 run (DBDistribution fname fitPath ds n) = do
   let n' = clampN n
   candidates <- liftIO $ withBackend fitPath $ \fitDb -> do
-    dsid <- Q.getOrCreateDataset fitDb ds
+    dsid <- Q.getOrCreateDatasetFit fitDb ds
     Q.topN fitDb dsid n'
   results <- liftIO $ withBackend fname $ \egDb ->
     fmap (Map.unionsWith addTuple) $ forM candidates $ \(eid, fit) -> do
       mTree <- extractBestFromDB egDb eid
       case mTree of
         Nothing -> pure Map.empty
-        Just tree -> pure $ Map.map (, fit) (getAllPatternsOnTree tree)
+        Just tree -> pure $ Map.map (, fit) (getAllPatternsOnTree (relabelParams tree))
   let averaged = Map.map (\(v1, v2) -> (v1, v2 / fromIntegral v1)) results
       sorted = sortOn (Down . snd . snd) (Map.toList averaged)
       header = "Pattern,Count,AvgFitness"
-      body = [ show p <> "," <> show cnt <> "," <> show avgFit
+      body = [ patternToString p <> "," <> show cnt <> "," <> show avgFit
              | (p, (cnt, avgFit)) <- sorted ]
   pure . SimpleStr $ intercalate "\n" (header : body)
 
@@ -1671,7 +1710,7 @@ run (DBDistribution fname fitPath ds n) = do
 run (DBModularity fname fitPath ds n) = do
   let n' = clampN n
   candidates <- liftIO $ withBackend fitPath $ \fitDb -> do
-    dsid <- Q.getOrCreateDataset fitDb ds
+    dsid <- Q.getOrCreateDatasetFit fitDb ds
     Q.topN fitDb dsid n'
   freqMap <- liftIO $ withBackend fname $ \egDb ->
     foldM (\acc (eid, _) -> do
@@ -1691,7 +1730,7 @@ run (DBCountPat fname fitPath ds patStr n) = do
     Left _ -> pure . SimpleStr $ "no parse for " <> patStr
     Right pat -> do
       candidates <- liftIO $ withBackend fitPath $ \fitDb -> do
-        dsid <- Q.getOrCreateDataset fitDb ds
+        dsid <- Q.getOrCreateDatasetFit fitDb ds
         Q.topN fitDb dsid n'
       count <- liftIO $ withBackend fname $ \egDb ->
         foldM (\acc (eid, _) -> do
@@ -1713,7 +1752,7 @@ run (DBPatternMap fname fitPath ds patStr n) = do
     Right pat -> do
       let wildcards = collectWildcards pat
       candidates <- liftIO $ withBackend fitPath $ \fitDb -> do
-        dsid <- Q.getOrCreateDataset fitDb ds
+        dsid <- Q.getOrCreateDatasetFit fitDb ds
         Q.topN fitDb dsid n'
       matches <- liftIO $ withBackend fname $ \egDb ->
         fmap catMaybes $ forM candidates $ \(eid, fit) -> do
@@ -1743,18 +1782,67 @@ run (DBExtractPat fname fitPath ds eid) = do
   mTree <- liftIO $ withBackend fname $ \db -> extractBestFromDB db eid
   case mTree of
     Nothing -> pure . SimpleStr $ "e-class " <> show eid <> " not found or extraction failed"
-    Just tree -> do
-      let pats = getAllPatternsOnTree tree
+    Just tree0 -> do
+      let tree = relabelParams tree0
+          pats = getAllPatternsOnTree tree
           sorted = sortOn (Down . snd) (Map.toList pats)
           header = "Pattern,Count"
-          body = [ show p <> "," <> show c | (p, c) <- sorted ]
+          body = [ patternToString p <> "," <> show c | (p, c) <- sorted ]
       pure . SimpleStr $ intercalate "\n" (header : body)
+
+-- | DB-native pattern-instances: enumerate patterns for many roots.
+-- Emits one row per (root e-class, pattern) occurrence. Roots come from a
+-- roots file (one e-id per line, "-" = none), or the top-N e-classes of a
+-- dataset, or every canonical e-class when n = 0.
+run (DBPatternInstances fname fitPath ds n minSize maxSize rootsFile) = do
+  roots <- liftIO $
+    if not (null rootsFile) && rootsFile /= "-"
+      then do
+        content <- readFile rootsFile
+        pure $ catMaybes
+          [ readMaybe (T.unpack (T.strip (T.pack l))) :: Maybe Int
+          | l <- lines content ]
+      else if n > 0
+        then withBackend fitPath $ \fitDb -> do
+               dsid <- Q.getOrCreateDatasetFit fitDb ds
+               map fst <$> Q.topN fitDb dsid (clampN n)
+        else withBackend fname $ \db -> do
+               rows <- queryDb db
+                 "SELECT eid FROM eclass WHERE canonical = eid ORDER BY eid" []
+               pure [ sqlToInt r | [r] <- rows ]
+  let minSz = max 1 minSize
+      maxSz = maxSize
+  rows <- liftIO $ withBackend fname $ \egDb ->
+    fmap concat $ forM roots $ \eid -> do
+      mTree <- extractBestFromDB egDb eid
+      case mTree of
+        Nothing -> pure []
+        Just tree0 -> do
+          let tree = relabelParams tree0
+              expr = showExpr tree
+              sz   = countNodes tree
+              pats = Map.toList (getAllPatternsOnTreeBounded maxSz tree)
+          pure
+            [ [show eid, quoteCSV expr, show sz, patternToString pat,
+               show (lenPat pat), show cnt]
+            | (pat, cnt) <- pats
+            , lenPat pat >= minSz
+            , maxSz <= 0 || lenPat pat <= maxSz
+            , pat /= VarPat 'A'
+            ]
+  let header = "RootId,RootExpression,RootSize,Pattern,PatternSize,PatternCount"
+      body = map (intercalate ",") rows
+  pure . SimpleStr $ intercalate "\n" (header : body)
+  where
+    quoteCSV x = "\"" <> concatMap esc x <> "\""
+    esc '"' = "\"\""
+    esc c   = [c]
 
 -- | DB-native distributionOfTokens: count token frequencies in top-N expressions.
 run (DBDistTokens fname fitPath ds n) = do
   let n' = clampN n
   candidates <- liftIO $ withBackend fitPath $ \fitDb -> do
-    dsid <- Q.getOrCreateDataset fitDb ds
+    dsid <- Q.getOrCreateDatasetFit fitDb ds
     Q.topN fitDb dsid n'
   results <- liftIO $ withBackend fname $ \egDb ->
     fmap (Map.unionsWith addTuple) $ forM candidates $ \(eid, fit) -> do
@@ -1768,6 +1856,63 @@ run (DBDistTokens fname fitPath ds n) = do
       body = [ show t <> "," <> show cnt <> "," <> show avgFit
              | (t, (cnt, avgFit)) <- sorted ]
   pure . SimpleStr $ intercalate "\n" (header : body)
+
+-- | Local eggp delta: insert a single expression into the DB-backed (paged)
+-- graph. Its subgraph is written through (content-addressed: existing
+-- subexpressions dedup against the live tables) and every genuinely-new class is
+-- marked as part of the re-saturation frontier, so a later 'dbEqSatFrontier'
+-- re-saturates only what changed. The root e-class id is returned (symmetric
+-- with the in-memory 'insert') so the eggp loop can track / evaluate it, and the
+-- expression is recorded in @expression_index@ (item: "was this seen?").
+-- O(subgraph) work, O(1) memory.
+--
+-- Also reports whether the root e-class already existed before this call
+-- (i.e. the expression was structurally present in the graph). It does not
+-- fit/evaluate anything.
+dbInsertImpl :: String -> String -> String -> String -> String
+             -> MyEGraph (Either String (EClassId, Bool))
+dbInsertImpl fname fitPath ds alg expr = do
+  let etree = parseSR (algToAlgs alg) "" False (B.pack expr)
+      fp = effectiveFitPath fname fitPath
+      split = isSplitPath fname fitPath
+  liftIO $ case etree of
+    Left _     -> pure (Left "no parse")
+    Right tree -> do
+      dsid <- withBackend fp $ \fitDb -> Q.getOrCreateDatasetFit fitDb ds
+      withBackend fname $ \db -> do
+        -- Ensure the egraph tables exist on the egraph DB. With a separate fit
+        -- DB this is required before the first insert, because node insertion
+        -- dedupes against eclass_node. Split mode creates structure only.
+        if split then createSchemaStructure db else createSchema db
+        er <- if split
+                then loadGraphLazyNoFit db 50000 100000 100000
+                else loadGraphLazy db dsid 50000 100000 100000
+        -- no e-graph stored yet: seed an empty paged graph so the first insert
+        -- works (subsequent inserts load the now-existing graph).
+        eg0 <- case er of
+          Left _  -> emptyPagedGraph db 50000 100000 100000
+          Right eg -> pure eg
+        case _classStore eg0 of
+          Nothing -> pure (Left "db-insert requires a paged graph")
+          Just _  -> do
+            -- E-class ids are allocated monotonically from '_nextId'. A root
+            -- id below the pre-insert watermark already existed; a new root
+            -- receives the current watermark (or higher).
+            let nextBefore = _nextId (_eDB eg0)
+            (eid, eg') <- runStateT (fromTree myCost tree) eg0
+            let existed = eid < nextBefore
+            flushStore eg'
+            sr <- if split
+                    then saveGraphStructure db eg'
+                    else saveGraph db dsid eg'
+            case sr of
+              Left err -> pure (Left err)
+              Right () -> do
+                -- The egraph DB now has the eclass_node table
+                -- recordExpressionIndex reads; the expression_index row itself
+                -- goes to the fit DB (which may be a separate file).
+                withBackend fp $ \fitDb -> recordExpressionIndex db fitDb dsid eid
+                pure (Right (eid, existed))
 
 -- | Helper: add tuples element-wise
 addTuple :: (Int, Double) -> (Int, Double) -> (Int, Double)
@@ -1893,6 +2038,42 @@ getAllPatternsOnTree tree = go Map.empty tree
                                                  | (l', vl) <- Map.toList patsL
                                                  , (r', vr) <- Map.toList patsR])
     go acc (Fix (Y _))        = Map.insertWith (+) (VarPat 'A') 1 acc
+
+-- | Size-bounded pattern enumeration.  Patterns larger than @maxSize@ are
+-- pruned during the recursive combination step instead of being materialised
+-- and filtered afterwards.  This is essential for large/repetitive trees,
+-- where the unbounded map can be combinatorially huge.
+getAllPatternsOnTreeBounded :: Int -> Fix SRTree -> Map.Map Pattern Int
+getAllPatternsOnTreeBounded maxSize
+  | maxSize <= 0 = getAllPatternsOnTree
+  | otherwise = go
+  where
+    keeps p = lenPat p <= maxSize
+
+    go (Fix (Var ix))     = Map.fromList
+                              [ (Fixed (Var ix), 1), (VarPat 'A', 1) ]
+    go (Fix (Param ix))   = Map.fromList
+                              [ (Fixed (Param ix), 1), (VarPat 'A', 1) ]
+    go (Fix (Const x))    = Map.fromList
+                              [ (Fixed (Const x), 1), (VarPat 'A', 1) ]
+    go (Fix (Uni f t))    =
+      let pats = go t
+          acc  = Map.insertWith (+) (VarPat 'A') 1
+                   (Map.mapKeys (\t' -> Fixed (Uni f t')) pats)
+      in Map.filterWithKey (\k _ -> keeps k) acc
+    go (Fix (Bin op l r)) =
+      let patsL = go l
+          patsR = go r
+          combos = Map.fromList
+            [ (p, min vl vr)
+            | (l', vl) <- Map.toList patsL
+            , (r', vr) <- Map.toList patsR
+            , let p = relabelVarPat (Fixed (Bin op l' r'))
+            , keeps p
+            ]
+          acc = Map.insertWith (+) (VarPat 'A') 1 combos
+      in Map.filterWithKey (\k _ -> keeps k) acc
+    go (Fix (Y _))        = Map.singleton (VarPat 'A') 1
 
 -- | Pure token frequency counting on a Fix SRTree.
 -- Counts operator shapes (e.g., "how many Add, how many Exp").
