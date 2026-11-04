@@ -204,6 +204,29 @@ getNEclassesCmd varnames (fname:ds:n:eid:_) = case (readMaybe @Int n, readMaybe 
     _ -> pure "getNEclasses requires N EID as integers"
 getNEclassesCmd varnames _ = helpCmd ["getNEclasses"]
 
+canonicalEidCmd varnames (fname:ds:eid:_) = case readMaybe @Int eid of
+    Nothing -> pure "The id must be an integer."
+    Just n  -> let (f, fp) = splitColon fname in run (DBCanonicalEid f fp ds n) >>= printFun varnames [] [] (NLL Gaussian)
+canonicalEidCmd varnames _ = helpCmd ["canonical-eid"]
+
+canonicalExprsCmd varnames (fname:ds:rest) =
+    let (f, fp) = splitColon fname
+        parseN []    = Just 0
+        parseN (x:_) = readMaybe @Int x
+    in case parseN rest of
+         Nothing -> pure "The n must be an integer."
+         Just k  -> run (DBCanonicalExprs f fp ds k) >>= printFun varnames [] [] (NLL Gaussian)
+canonicalExprsCmd varnames _ = helpCmd ["canonical-expressions"]
+
+fittedExprsCmd varnames (fname:ds:rest) =
+    let (f, fp) = splitColon fname
+        parseN []    = Just 0
+        parseN (x:_) = readMaybe @Int x
+    in case parseN rest of
+         Nothing -> pure "The n must be an integer."
+         Just k  -> run (DBFittedExprs f fp ds k) >>= printFun varnames [] [] (NLL Gaussian)
+fittedExprsCmd varnames _ = helpCmd ["fitted-expressions"]
+
 eclassTerminalsCmd varnames (fname:ds:eid:_) = case readMaybe @Int eid of
     Nothing -> pure "The id must be an integer."
     Just n  -> let (f, fp) = splitColon fname in run (DBEClassTerminals f fp ds n) >>= printFun varnames [] [] (NLL Gaussian)
@@ -279,7 +302,7 @@ predictionDataCmd varnames loss (fname:ds:eid:dataPath:_) = case readMaybe @Int 
     Just n  -> let (f, fp) = splitColon fname in run (DBPredictionData f fp ds n dataPath loss) >>= printFun varnames [] [] (NLL Gaussian)
 predictionDataCmd varnames _ _ = helpCmd ["prediction-data"]
 
-commands = ["help", "top", "distribution", "distribution-pattern", "count", "modularity", "pareto", "report", "optimize", "eqsat", "eqsat-frontier", "insert", "insert-check", "set-fit", "stream", "push-fit", "refresh-fitness", "subtrees", "getNExprs", "getNEclasses", "eclass-terminals", "getENodeInfo", "top-pattern", "count-pattern", "pattern-map", "extract-pattern", "pattern-instances", "distribution-tokens", "profile-data", "prediction-data", "load", "import", "persist"]
+commands = ["help", "top", "distribution", "distribution-pattern", "count", "modularity", "pareto", "report", "optimize", "eqsat", "eqsat-frontier", "insert", "insert-check", "set-fit", "stream", "push-fit", "refresh-fitness", "subtrees", "getNExprs", "getNEclasses", "canonical-eid", "canonical-expressions", "fitted-expressions", "eclass-terminals", "getENodeInfo", "top-pattern", "count-pattern", "pattern-map", "extract-pattern", "pattern-instances", "distribution-tokens", "profile-data", "prediction-data", "load", "import", "persist"]
 
 topHlp = "top FILE DATASET N [with ci [data FILE]]: top-N e-classes by fitness from the SQLite database FILE. With ci, appends profile-likelihood CIs for the parameters (requires the data FILE)."
 
@@ -310,6 +333,9 @@ hlpMap = Map.fromList $ Prelude.zip commands
                             , "subtrees FILE DATASET N: list all e-class IDs in the best expression tree rooted at N from the SQLite database FILE."
                             , "getNExprs FILE DATASET N EID: get up to N equivalent expressions from e-class EID in the SQLite database FILE."
                             , "getNEclasses FILE DATASET N EID: get e-class ID sets for up to N expression variants from EID in the SQLite database FILE."
+                            , "canonical-eid FILE DATASET EID: resolve EID to its canonical e-class id after equality saturation."
+                            , "canonical-expressions FILE DATASET [N]: list Id,Expression,Size,Key for canonical e-classes (all when N <= 0)."
+                            , "fitted-expressions FILE DATASET [N]: list Id,Expression,Fitness,Key for fitted e-classes in the dataset (all when N <= 0)."
                             , "eclass-terminals FILE DATASET EID: list all unique terminals inside e-class EID from the SQLite database FILE."
                             , "getENodeInfo FILE DATASET EID: list the e-nodes of e-class EID as (symbol, arity, cost) from the SQLite database FILE."
                             , "top-pattern FILE DATASET N PATTERN [root] [not] [ci [data FILE]]: top-N expressions matching PATTERN, with wildcard bindings (v0, v1, ...)."
@@ -362,6 +388,9 @@ reggressionDB myCmd dataset lossStr varnames = do
              , subtreesCmd varnames
              , getNExprsCmd varnames
              , getNEclassesCmd varnames
+             , canonicalEidCmd varnames
+             , canonicalExprsCmd varnames
+             , fittedExprsCmd varnames
              , eclassTerminalsCmd varnames
              , enodeInfoCmd varnames
              , topPatternCmd varnames loss

@@ -24,7 +24,7 @@ import qualified Data.Map as Map
 import qualified Data.HashMap.Strict as HM
 import qualified Data.HashSet as Set
 import qualified Data.Vector.Unboxed as VU
-import Data.List ( nub, sortOn, intercalate, isPrefixOf )
+import Data.List ( nub, sort, sortOn, intercalate, isPrefixOf )
 import Data.Ord (Down(..))
 import Data.List.Split ( splitOn )
 import Control.Lens (over)
@@ -118,6 +118,9 @@ data Command  = Top Int Filter Criteria PatStr Bool
                 | DBSubtrees String String String Int             -- fname _fitPath ds eid
                 | DBGetNExprs String String String Int Int        -- fname _fitPath ds n eid
                 | DBGetNEclasses String String String Int Int     -- fname _fitPath ds n eid
+                | DBCanonicalEid String String String Int         -- fname _fitPath ds eid
+                | DBCanonicalExprs String String String Int       -- fname _fitPath ds limit
+                | DBFittedExprs String String String Int          -- fname fitPath ds limit
                 | DBEClassTerminals String String String Int      -- fname _fitPath ds eid
                 | DBENodeInfo String String String Int            -- fname _fitPath ds eid
                 | DBTopPattern String String String Int String Bool Bool (Maybe String) Loss
@@ -1433,6 +1436,69 @@ run (DBGetNEclasses fname fitPath ds n eid) = do
   let rows = [intercalate "," (map show ids) | ids <- eclassSets]
   pure . SimpleStr $ intercalate "\n" ("EClassIds" : rows)
 
+-- | Resolve an e-class id to its canonical representative. Useful after
+-- equality saturation has merged classes.
+run (DBCanonicalEid fname _fitPath _ds eid) = do
+  r <- liftIO $ withBackend fname $ \db -> do
+         rows <- queryDb db "SELECT canonical FROM eclass WHERE eid = ?"
+                           [SqlInteger (fromIntegral eid)]
+         pure $ case rows of
+           [[c]] -> Just (sqlToInt c)
+           _     -> Nothing
+  pure . SimpleStr $ case r of
+    Nothing    -> "e-class " <> show eid <> " not found"
+    Just canon -> show canon
+
+-- | Enumerate canonical e-classes and their best expression:
+-- @Id,Expression,Size,Key@. A non-positive limit means all canonical classes.
+-- `Key` is a commutative/associative canonical key (see 'canonicalKey'), so
+-- it can be joined across independently built e-graphs.
+run (DBCanonicalExprs fname _fitPath _ds limit) = do
+  entries <- liftIO $ withBackend fname $ \db -> do
+    rows <- queryDb db
+      "SELECT eid FROM eclass WHERE canonical = eid ORDER BY eid" []
+    let eids = [ sqlToInt e | [e] <- rows ]
+        selected = if limit > 0 then Prelude.take limit eids else eids
+    forM selected $ \eid -> do
+      mTree <- extractBestFromDB db eid
+      pure $ case mTree of
+        Nothing -> Nothing
+        Just tree ->
+          let t = relabelParams tree
+          in Just (eid, showExpr t, countNodes t, canonicalKey t)
+  let header = "Id,Expression,Size,Key"
+      body = [ show eid <> "," <> expr <> "," <> show sz <> "," <> key
+             | Just (eid, expr, sz, key) <- entries ]
+  pure . SimpleStr $ intercalate "\n" (header : body)
+
+-- | Enumerate fitted e-classes with their best expression and fitness:
+-- @Id,Expression,Fitness,Key@. The key is canonical across databases.
+run (DBFittedExprs fname fitPath ds limit) = do
+  fits <- liftIO $ withBackend fitPath $ \fitDb -> do
+    mds <- Q.datasetId fitDb ds
+    case mds of
+      Nothing   -> pure []
+      Just dsid -> do
+        rows <- queryDb fitDb
+          "SELECT eid, fitness FROM dataset_fit \
+          \WHERE dataset_id = ? AND fitness IS NOT NULL ORDER BY eid"
+          [SqlInteger (fromIntegral dsid)]
+        pure [ (sqlToInt e, f)
+             | [e, fv] <- rows
+             , Just f <- [sqlToMaybeDouble fv] ]
+  entries <- liftIO $ withBackend fname $ \db ->
+    forM (if limit > 0 then Prelude.take limit fits else fits) $ \(eid, fit) -> do
+      mTree <- extractBestFromDB db eid
+      pure $ case mTree of
+        Nothing -> Nothing
+        Just tree ->
+          let t = relabelParams tree
+          in Just (eid, showExpr t, fit, canonicalKey t)
+  let header = "Id,Expression,Fitness,Key"
+      body = [ show eid <> "," <> expr <> "," <> show fit <> "," <> key
+             | Just (eid, expr, fit, key) <- entries ]
+  pure . SimpleStr $ intercalate "\n" (header : body)
+
 -- | DB-native eclass-terminals: walk all e-nodes in a class and collect
 -- unique terminals (Var, Param, Const) with cycle detection.
 run (DBEClassTerminals fname fitPath ds eid) = do
@@ -2007,6 +2073,28 @@ canonicalEidDB db = go (0 :: Int)
           case rows of
             [[c]] | sqlToInt c /= eid -> go (k + 1) (sqlToInt c)
             _                         -> pure eid
+
+-- | Canonical key for cross-database expression joins. Parameters are expected
+-- to be relabelled first (see 'DBCanonicalExprs'), and Add/Mul operands are
+-- flattened, sorted, and printed in a fixed order so independent e-graphs with
+-- different e-class ids/operand orders produce the same key.
+canonicalKey :: Fix SRTree -> String
+canonicalKey t@(Fix (Bin Add _ _)) =
+  "bAdd(" <> intercalate ";" (sort (map canonicalKey (flattenCommutative Add t))) <> ")"
+canonicalKey t@(Fix (Bin Mul _ _)) =
+  "bMul(" <> intercalate ";" (sort (map canonicalKey (flattenCommutative Mul t))) <> ")"
+canonicalKey (Fix (Bin op l r)) =
+  "b" <> show op <> "(" <> canonicalKey l <> ";" <> canonicalKey r <> ")"
+canonicalKey (Fix (Uni f t)) = "u" <> show f <> "(" <> canonicalKey t <> ")"
+canonicalKey (Fix (Var i))   = "x" <> show i
+canonicalKey (Fix (Param i)) = "t" <> show i
+canonicalKey (Fix (Const x)) = "c" <> show x
+canonicalKey (Fix (Y i))     = "y" <> show i
+
+flattenCommutative :: Op -> Fix SRTree -> [Fix SRTree]
+flattenCommutative op (Fix (Bin op' l r))
+  | op == op' = flattenCommutative op l ++ flattenCommutative op r
+flattenCommutative _ t = [t]
 
 -- | Max N cap for bounded DB-native commands
 maxBoundedN :: Int

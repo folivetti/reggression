@@ -924,3 +924,20 @@ it reports existence from the pre-insert e-class watermark, so it does not
 depend on `expression_index` being populated. Auto-discovery finds the newest sibling
 `dist-newstyle/.../reggression_capi/libreggression_capi.so`; `REGRESSION_LIB`
 and `Reggression.set_library!` override it.
+
+Additional native commands/wrappers added for the eqsat → fitted-DB workflow:
+
+- `canonical-eid` / `canonical_eid` — resolve merged eids after eqsat.
+- `canonical-expressions` / `all_expressions` — enumerate canonical roots as
+  `Id,Expression,Size,Key`.
+- `fitted-expressions` / `fitness_lookup` — enumerate fitted classes as
+  `Id,Expression,Fitness,Key` and build a `Key => Fitness` dictionary.
+- `eqsat-frontier` / `eqsat_frontier`.
+- `getNExprs` / `get_nexpressions`.
+- `report`.
+
+`Key` is a commutative/associative structural key (`relabelParams`, then
+flatten+sort `Add`/`Mul` operands), so it can join independently built e-graph
+DBs even when eids and operand order differ. The key remains structural (not a
+complete semantic normal form); merging the DBs via `db_insert!` + `set_fit!`
+is the sound fallback.

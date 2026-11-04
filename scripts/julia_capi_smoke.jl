@@ -88,6 +88,14 @@ function main()
     @assert endswith(strip(check), ",0") "expected new expression, got: $(repr(check))"
     println("insert-check: existing -> ", eid, ",1; new -> ", strip(check))
 
+    # 1d. Canonical expression enumeration and keyed fitness lookup.
+    status, canon = run_cmd("canonical-eid $db $dsname $eid", DATASET, varnames)
+    @assert status == 0 && parse(Int, strip(canon)) == eid "canonical-eid failed: $canon"
+    status, exprs = run_cmd("canonical-expressions $db $dsname 100", DATASET, varnames)
+    @assert status == 0 && occursin("Id,Expression,Size,Key", exprs) "canonical-expressions failed:\n$exprs"
+    status, fits = run_cmd("fitted-expressions $db $dsname 100", DATASET, varnames)
+    @assert status == 0 && occursin("Id,Expression,Fitness,Key", fits) "fitted-expressions failed:\n$fits"
+
     # 2. Query the top expressions back out.
     status, top = run_cmd("top $db $dsname 5", DATASET, varnames)
     @assert status == 0 "top failed (status=$status): $top"
