@@ -479,8 +479,10 @@ class Reggression():
             natural order first. If False or "off", display each expression once.
 
         asDiv : bool, default=False
-            Render Recip factors inside products as division (x * Recip(y) is
-            shown as (x / y)).
+            Render Recip factors inside products as division, paired with the
+            factor before them (Mul[x, y, Recip z] renders as `x * (y / z)`,
+            Mul[x, Recip z, y] as `(x / z) * y`, Mul[Recip z, x, y] as
+            `(1 / z) * x * y`), so permuted orderings stay distinct.
 
         asSqr : bool, default=False
             Render squares as `SQR(x)` instead of `(x ^ 2.0)`.

@@ -30,9 +30,11 @@
   sub-classes (`extractNFromDB`), instead of one tree per root e-node — so
   rewritten equivalents are visible from the root e-class.
 - `getNExprs` display options (Python `getNExpressions(..., asDiv=, asSqr=)`):
-  `div` renders Recip factors inside products as division (`x * Recip(y)` is
-  shown as `(x / y)`), `sqr` renders squares as `SQR(x)` instead of
-  `(x ^ 2.0)`.
+  `div` renders Recip factors inside products as division, paired with the
+  factor before them (`Mul[x, y, Recip z]` shown as `x * (y / z)`,
+  `Mul[x, Recip z, y]` as `(x / z) * y`, `Mul[Recip z, x, y]` as
+  `(1 / z) * x * y`) so permuted orderings stay distinct; `sqr` renders
+  squares as `SQR(x)` instead of `(x ^ 2.0)`.
 
 ## 2.5.1
 

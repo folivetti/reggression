@@ -2284,12 +2284,18 @@ showExprOpts asDiv asSqr = go
     isRec _ = False
     flattenMul (Fix (Bin Mul l r)) = flattenMul l ++ flattenMul r
     flattenMul x = [x]
-    renderChain fs =
-      let (dens, nums) = foldr (\f (ds, ns) -> case f of
-                                  Fix (Uni Recip r) -> (go r : ds, ns)
-                                  _                 -> (ds, go f : ns)) ([], []) fs
-          numStr = if null nums then "1" else intercalate " * " nums
-      in "(" <> numStr <> concatMap (" / " <>) dens <> ")" 
+    -- each Recip factor renders as a division paired with the factor right
+    -- before it (or 1 when it comes first): Mul[x, y, Recip z] renders as
+    -- x * (y / z), Mul[x, Recip z, y] as (x / z) * y, Mul[Recip z, x, y] as
+    -- (1 / z) * x * y -- so permutations keep distinct renderings.
+    renderChain fs = intercalate " * " (units fs)
+      where
+        units [] = []
+        units (f : rest) = case f of
+          Fix (Uni Recip r) -> ("(1 / " <> go r <> ")") : units rest
+          _ -> case rest of
+                 (Fix (Uni Recip r) : rest') -> ("(" <> go f <> " / " <> go r <> ")") : units rest'
+                 _ -> go f : units rest 
 
 -- | Expands each tree into its distinct sum/mul orderings when the flag is
 -- set (natural order first), keeping the input as-is otherwise.
