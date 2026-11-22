@@ -7,7 +7,6 @@ module Commands where
 
 import Control.Applicative ((<|>), optional)
 import Data.Attoparsec.ByteString.Char8 hiding ( match )
-import Data.Attoparsec.Expr
 import qualified Data.ByteString.Char8 as B
 import Data.Maybe
 import Text.Read ( readMaybe )
@@ -19,12 +18,12 @@ import Control.Monad ( forM_, filterM, forM, foldM, when )
 import Control.Monad.IO.Class ( liftIO )
 import Control.Exception ( bracket, bracketOnError, evaluate, try, SomeException, catch )
 import Control.DeepSeq (force)
-import Data.Char ( toUpper )
+import Data.Char ( toLower, toUpper )
 import qualified Data.Map as Map
 import qualified Data.HashMap.Strict as HM
 import qualified Data.HashSet as Set
 import qualified Data.Vector.Unboxed as VU
-import Data.List ( nub, sort, sortOn, intercalate, isPrefixOf )
+import Data.List ( nub, nubBy, permutations, sort, sortOn, intercalate, isPrefixOf )
 import Data.Ord (Down(..))
 import Data.List.Split ( splitOn )
 import Control.Lens (over)
@@ -39,6 +38,8 @@ import Data.SRTree.Derivative (deriveByParam)
 import Data.SRTree.Internal (countNodes, convertProtectedOps)
 import Data.SRTree.Print hiding ( printExpr )
 import Text.ParseSR (SRAlgs(..), parseSR, Output(..), showOutput)
+import Text.ParseRule (resolveRules)
+import qualified Text.ParseRule as PR
 import System.Random
 
 import Statistics.Distribution ( ContDistr(quantile) )
@@ -116,7 +117,7 @@ data Command  = Top Int Filter Criteria PatStr Bool
                 | DBReport String String String String String Int Bool String -- fname fitPath ds trainPath testPath eid ci lossName
                 | DBOptimize String String String String Int Bool String  -- fname fitPath ds dataPath eid ci lossName
                 | DBSubtrees String String String Int             -- fname _fitPath ds eid
-                | DBGetNExprs String String String Int Int        -- fname _fitPath ds n eid
+                | DBGetNExprs String String String Int Int String -- fname _fitPath ds n eid mode
                 | DBGetNEclasses String String String Int Int     -- fname _fitPath ds n eid
                 | DBCanonicalEid String String String Int         -- fname _fitPath ds eid
                 | DBCanonicalExprs String String String Int       -- fname _fitPath ds limit
@@ -137,8 +138,8 @@ data Command  = Top Int Filter Criteria PatStr Bool
                 | DBPredictionData String String String Int String Loss -- fname fitPath ds eid dataPath loss
                | ImportDB String String String String Loss String Bool
                | Import String Loss String Bool
-              | EqSatStep Int ArgOpt
-              | GetNExprs Int EClassId
+              | EqSatStep Int String ArgOpt -- n rules spec (builtin name, @FILE or inline)
+              | GetNExprs Int EClassId String -- n eid mode (off | permutations)
               | GetNEclass Int Int
               | PatternMap String (Maybe Int)
               | EClassTerminals Int
@@ -307,87 +308,87 @@ putEOL bs | B.null bs = bs
           | B.last bs == '\n' = bs
           | otherwise         = B.snoc bs '\n'
 
--- * Pattern parser (previously exported by Text.ParseSR)
-
-type ParsePat = Parser Pattern
+-- * Pattern parser (shared with srtree's Text.ParseRule)
 
 -- | parses a string representing a pattern expression (e.g. @v0 * x0 + t0@).
+-- Pattern variables can also be written as single letters (e.g. @x + 0@).
 parsePat :: B.ByteString -> Either String Pattern
-parsePat = eitherResult . (`feed` "") . parse parsePatExpr . putEOL . B.strip
-
-parsePatExpr :: ParsePat
-parsePatExpr = parsePatternExpr (prefixOps : binOps) [] var
-  where
-    prefixOps = Prelude.map (uncurry prefix)
-                [ ("id", id), ("abs", abs)
-                  , ("sinh", sinh), ("cosh", cosh), ("tanh", tanh)
-                  , ("sin", sin), ("cos", cos), ("tan", tan)
-                  , ("asinh", asinh), ("acosh", acosh), ("atanh", atanh)
-                  , ("asin", asin), ("acos", acos), ("atan", atan)
-                  , ("sqrtabs", sqrtabs'), ("sqrt", sqrt), ("cbrt", cbrt'), ("square", (**2))
-                  , ("logabs", logabs'), ("log", log), ("exp", exp), ("cube", cube'), ("recip", recip')
-                  , ("Id", id), ("Abs", abs)
-                  , ("Sinh", sinh), ("Cosh", cosh), ("Tanh", tanh)
-                  , ("Sin", sin), ("Cos", cos), ("Tan", tan)
-                  , ("ASinh", asinh), ("ACosh", acosh), ("ATanh", atanh)
-                  , ("ASin", asin), ("ACos", acos), ("ATan", atan)
-                  , ("SqrtAbs", sqrtabs'), ("Sqrt", sqrt), ("Cbrt", cbrt'), ("Square", (**2))
-                  , ("LogAbs", logabs'), ("Log", log), ("Exp", exp), ("Recip", recip'), ("Cube", cube')
-                  , ("|log|", logabs'), ("|Log|", logabs'), ("|sqrt|", sqrtabs'), ("|Sqrt|", sqrtabs')
-                  , ("√", sqrt), ("|√|", sqrtabs')
-                ]
-    binOps = [[binary "^" (**) AssocLeft], [binary "**" (**) AssocLeft]
-            , [binary "*" (*) AssocLeft, binary "/" (/) AssocLeft]
-            , [binary "+" (+) AssocLeft, binary "-" (-) AssocLeft]
-            , [binary "|**|" powabs AssocLeft], [binary "|^|" powabs AssocLeft]
-            , [binary "aq" aq AssocLeft], [binary "|/|" aq AssocLeft]
-            ]
-    powabs l r  = Fixed $ Bin PowerAbs l r
-    aq l r      = Fixed $ Bin AQ l r
-    logabs' t   = Fixed $ Uni LogAbs t
-    sqrtabs' t  = Fixed $ Uni SqrtAbs t
-    cbrt' t     = Fixed $ Uni Cbrt t
-    cube' t     = Fixed $ Uni Cube t
-    recip' t    = Fixed $ Uni Recip t
-
-    var = do char 'x'
-             ix <- decimal
-             pure $ Fixed $ Var ix
-          <|> do char 't'
-                 ix <- decimal
-                 pure $ Fixed $ Param ix
-          <|> do char 'v'
-                 ix <- decimal
-                 pure $ VarPat (toEnum $ ix+65)
-          <?> "var"
-
--- | Creates a parser for a binary operator
-binary :: B.ByteString -> (a -> a -> a) -> Assoc -> Operator B.ByteString a
-binary name fun  = Infix (do{ string (B.cons ' ' (B.snoc name ' ')) <|> string name; pure fun })
-
--- | Creates a parser for a unary function
-prefix :: B.ByteString -> (a -> a) -> Operator B.ByteString a
-prefix  name fun = Prefix (do{ string name; pure fun })
-
--- | Envelopes the parser in parens
-parens :: Parser a -> Parser a
-parens e = do{ string "("; e' <- e; string ")"; pure e' } <?> "parens"
-
-parsePatternExpr :: [[Operator B.ByteString Pattern]] -> [ParsePat -> ParsePat] -> ParsePat -> ParsePat
-parsePatternExpr table binFuns var =
-    do e <- expr
-       many1' space
-       pure e
-  where
-    term  = parens expr <|> choice (Prelude.map ($ expr) binFuns) <|> coef <|> var <?> "term"
-    expr  = buildExpressionParser table term
-    coef  = Fixed . Const <$> signed double <?> "const"
+parsePat = PR.parsePat
 
 data PrintResults = MultiExprs [(EClassId, IntMap.IntMap (Int, Int))] | SingleExpr EClassId | Counts [(Pattern, (Int, Double))] | SimpleStr String | MultiTrees [Fix SRTree] | MultiClass [[EClassId]] | NoPrint
                   -- deriving (Show)
 
 -- running
 run :: Command -> MyEGraph PrintResults
+
+-- | implementation of 'DBEqSat' with a resolved rule set
+runDBEqSat :: String -> String -> String -> Int -> String -> [Rule] -> MyEGraph PrintResults
+runDBEqSat fname fitPath ds iters rs rules = do
+  let split = isSplitPath fname fitPath
+  r <- liftIO $ withBackend fname $ \db -> do
+        er <- if split
+                then loadGraphLazyNoFit db 50000 100000 100000
+                else do dsid <- Q.getOrCreateDataset db ds
+                        loadGraphLazy db dsid 50000 100000 100000
+        case er of
+          Left err -> pure (Left err)
+          Right eg -> do
+            -- cost/best are not persisted: recompute them first so rewrites
+            -- operate on valid per-class data (imported DBs carry defaults).
+            let go g = execStateT (runEqSat myCost rules iters) g
+            eg' <- go eg
+            flushStore eg'
+            sr <- if split
+                    then saveGraphStructure db eg'
+                    else do dsid <- Q.getOrCreateDataset db ds
+                            saveGraph db dsid eg'
+            case sr of
+              Left err -> pure (Left ("saveGraph failed: " <> err))
+              Right () -> do
+                -- a full pass re-saturated everything: clear any frontier marks
+                case _classStore eg' of
+                  Nothing -> pure ()
+                  Just h  -> liftIO (cpsEndFrontier h)
+                pure (Right ())
+  pure . SimpleStr $ case r of
+    Left err -> "db-eqsat failed: " <> err
+    Right () -> "db-eqsat applied " <> show iters <> " iteration(s) of '"
+                  <> (if null rs then "default" else rs) <> "' on " <> fname
+
+
+-- | implementation of 'DBEqSatFrontier' with a resolved rule set
+runDBEqSatFrontier :: String -> String -> String -> Int -> String -> [Rule] -> MyEGraph PrintResults
+runDBEqSatFrontier fname fitPath ds iters rs rules = do
+  let split = isSplitPath fname fitPath
+  r <- liftIO $ withBackend fname $ \db -> do
+        er <- if split
+                then loadGraphLazyNoFit db 50000 100000 100000
+                else do dsid <- Q.getOrCreateDataset db ds
+                        loadGraphLazy db dsid 50000 100000 100000
+        case er of
+          Left err -> pure (Left err)
+          Right eg -> case _classStore eg of
+            Nothing -> pure (Left "db-eqsat-frontier requires a paged graph")
+            Just h  -> do
+              n0 <- length <$> loadFrontierRows db
+              liftIO (cpsBeginFrontier h)
+              eg' <- execStateT (runEqSat myCost rules iters) eg
+              liftIO (cpsEndFrontier h)
+              flushStore eg'
+              sr <- if split
+                      then saveGraphStructure db eg'
+                      else do dsid <- Q.getOrCreateDataset db ds
+                              saveGraph db dsid eg'
+              pure $ case sr of
+                Left err -> Left ("saveGraph failed: " <> err)
+                Right () -> Right n0
+  pure . SimpleStr $ case r of
+    Left err -> "db-eqsat-frontier failed: " <> err
+    Right n0 -> "db-eqsat-frontier re-saturated " <> show n0
+                  <> " frontier class(es) in " <> show iters
+                  <> " iteration(s) of '"
+                  <> (if null rs then "default" else rs) <> "' on " <> fname
+
 
 -- | Grid-scan profile for a single parameter.
 -- For each grid point, fixes the parameter and re-optimizes nuisance params.
@@ -992,39 +993,10 @@ run (RefreshFit fname fitPath ds) = do
 -- e-class body is streamed through the store, and class bodies never all live in
 -- memory at once. The rewritten graph is written back with 'saveGraph'.
 run (DBEqSat fname fitPath ds iters rs) = do
-  let rules = case rs of
-               "params" -> rewritesParams
-               _        -> rewrites
-      split = isSplitPath fname fitPath
-  r <- liftIO $ withBackend fname $ \db -> do
-        er <- if split
-                then loadGraphLazyNoFit db 50000 100000 100000
-                else do dsid <- Q.getOrCreateDataset db ds
-                        loadGraphLazy db dsid 50000 100000 100000
-        case er of
-          Left err -> pure (Left err)
-          Right eg -> do
-            -- cost/best are not persisted: recompute them first so rewrites
-            -- operate on valid per-class data (imported DBs carry defaults).
-            let go g = execStateT (runEqSat myCost rules iters) g
-            eg' <- go eg
-            flushStore eg'
-            sr <- if split
-                    then saveGraphStructure db eg'
-                    else do dsid <- Q.getOrCreateDataset db ds
-                            saveGraph db dsid eg'
-            case sr of
-              Left err -> pure (Left ("saveGraph failed: " <> err))
-              Right () -> do
-                -- a full pass re-saturated everything: clear any frontier marks
-                case _classStore eg' of
-                  Nothing -> pure ()
-                  Just h  -> liftIO (cpsEndFrontier h)
-                pure (Right ())
-  pure . SimpleStr $ case r of
-    Left err -> "db-eqsat failed: " <> err
-    Right () -> "db-eqsat applied " <> show iters <> " iteration(s) of '"
-                  <> (if null rs then "default" else rs) <> "' on " <> fname
+  erules <- liftIO $ resolveRules rs
+  case erules of
+    Left err    -> pure . SimpleStr $ "db-eqsat failed: " <> err
+    Right rules -> runDBEqSat fname fitPath ds iters rs rules
 
 -- | Re-saturate only the frontier: e-classes that have been created or merged
 -- since the last re-saturation pass (tracked by the write-through into the
@@ -1033,38 +1005,10 @@ run (DBEqSat fname fitPath ds iters rs) = do
 -- frontier afterwards. O(1) memory, paged. The pure in-memory eggp loop and a
 -- full 'dbEqSat' are unaffected.
 run (DBEqSatFrontier fname fitPath ds iters rs) = do
-  let rules = case rs of
-               "params" -> rewritesParams
-               _        -> rewrites
-      split = isSplitPath fname fitPath
-  r <- liftIO $ withBackend fname $ \db -> do
-        er <- if split
-                then loadGraphLazyNoFit db 50000 100000 100000
-                else do dsid <- Q.getOrCreateDataset db ds
-                        loadGraphLazy db dsid 50000 100000 100000
-        case er of
-          Left err -> pure (Left err)
-          Right eg -> case _classStore eg of
-            Nothing -> pure (Left "db-eqsat-frontier requires a paged graph")
-            Just h  -> do
-              n0 <- length <$> loadFrontierRows db
-              liftIO (cpsBeginFrontier h)
-              eg' <- execStateT (runEqSat myCost rules iters) eg
-              liftIO (cpsEndFrontier h)
-              flushStore eg'
-              sr <- if split
-                      then saveGraphStructure db eg'
-                      else do dsid <- Q.getOrCreateDataset db ds
-                              saveGraph db dsid eg'
-              pure $ case sr of
-                Left err -> Left ("saveGraph failed: " <> err)
-                Right () -> Right n0
-  pure . SimpleStr $ case r of
-    Left err -> "db-eqsat-frontier failed: " <> err
-    Right n0 -> "db-eqsat-frontier re-saturated " <> show n0
-                  <> " frontier class(es) in " <> show iters
-                  <> " iteration(s) of '"
-                  <> (if null rs then "default" else rs) <> "' on " <> fname
+  erules <- liftIO $ resolveRules rs
+  case erules of
+    Left err    -> pure . SimpleStr $ "db-eqsat-frontier failed: " <> err
+    Right rules -> runDBEqSatFrontier fname fitPath ds iters rs rules
 
 -- | Insert an expression (returns the root e-class id). See 'dbInsertImpl'.
 run (DBInsert fname fitPath ds alg expr) = do
@@ -1409,17 +1353,20 @@ run (DBSubtrees fname fitPath ds eid) = do
 
 -- | DB-native getNExprs: extract up to N expression variants from a single
 -- e-class by reading its page and iterating over e-nodes.
-run (DBGetNExprs fname fitPath ds n eid) = do
-  exprs <- liftIO $ withBackend fname $ \db -> do
-    mPage <- readPage db eid
-    case mPage of
-      Nothing -> pure []
-      Just page -> do
-        let ec = decode page :: EClass
-            nodes = Prelude.take n $ Set.toList (_eNodes ec)
-        forM nodes $ \en -> extractTreeFromNode db IntSet.empty 0 en
-  let rows = [showExpr t | Just t <- exprs]
-  pure . SimpleStr $ intercalate "\n" ("Expression" : rows)
+run (DBGetNExprs fname fitPath ds n eid mode) =
+  case parsePermuteMode mode of
+    Left err -> pure . SimpleStr $ "getNExprs failed: " <> err
+    Right perm -> do
+      exprs <- liftIO $ withBackend fname $ \db -> do
+        mPage <- readPage db eid
+        case mPage of
+          Nothing -> pure []
+          Just page -> do
+            let ec = decode page :: EClass
+                nodes = Prelude.take n $ Set.toList (_eNodes ec)
+            forM nodes $ \en -> extractTreeFromNode db IntSet.empty 0 en
+      let rows = [showExpr t | t <- permuteSumMul perm [t | Just t <- exprs]]
+      pure . SimpleStr $ intercalate "\n" ("Expression" : rows)
 
 -- | DB-native getNEclasses: like getNExprs but returns e-class ID sets.
 run (DBGetNEclasses fname fitPath ds n eid) = do
@@ -1732,17 +1679,24 @@ run (EClassTerminals eid) = do
 
 --run (EqSatStep n dataInfo) = do (forM rewrites $ \r -> runEqSat myCost [r] n) >> refitChanged dataInfo
 --                                pure NoPrint
-run (EqSatStep n dataInfo) = do createDB 
-                                forM_ [1..n] $ \_ -> (do runEqSat myCost rewrites 1
-                                                         createDB
-                                                         -- durable commit point: write back any
-                                                         -- dirty e-class pages (no-op unless paged)
-                                                         flushGraphStore)
-                                refitChanged dataInfo
-                                pure NoPrint
+run (EqSatStep n rs dataInfo) = do
+  erules <- liftIO $ resolveRules rs
+  case erules of
+    Left err -> pure . SimpleStr $ "eqsat failed: " <> err
+    Right rules -> do createDB
+                      forM_ [1..n] $ \_ -> (do runEqSat myCost rules 1
+                                               createDB
+                                               -- durable commit point: write back any
+                                               -- dirty e-class pages (no-op unless paged)
+                                               flushGraphStore)
+                      refitChanged dataInfo
+                      pure NoPrint
 
-run (GetNExprs n eid) = do ts <- getNExpressionsFrom n eid
-                           pure $ MultiTrees ts
+run (GetNExprs n eid mode) =
+  case parsePermuteMode mode of
+    Left err -> pure . SimpleStr $ "getNExprs failed: " <> err
+    Right perm -> do ts <- getNExpressionsFrom n eid
+                     pure $ MultiTrees $ permuteSumMul perm ts
 
 run (GetNEclass n eid) = do
   ids <- getNEclassFrom n eid
@@ -2256,6 +2210,50 @@ expandNaryNodes db seen n ((cid, cnt) : rest) = do
 naryTreeOp :: NOp -> [Fix SRTree] -> Fix SRTree
 naryTreeOp _ [] = Fix (Var 0)
 naryTreeOp op ts = foldr1 (\a b -> Fix (Bin (toOp op) a b)) ts
+
+-- * Permutations of sum and product children
+
+-- | Parses the optional mode argument of @getNExprs@: @off@ (default, one row
+-- per expression) or @permutations@ (one row per distinct ordering of the
+-- children of every sum/product, natural order first).
+parsePermuteMode :: String -> Either String Bool
+parsePermuteMode s
+  | m `elem` ["", "off", "none", "false", "no"] = Right False
+  | m `elem` ["permutations", "permute", "perms", "on", "true", "yes"] = Right True
+  | otherwise = Left ("unknown mode '" <> s <> "': use 'off' or 'permutations'")
+  where m = map toLower s
+
+-- | Expands each tree into its distinct sum/mul orderings when the flag is
+-- set (natural order first), keeping the input as-is otherwise.
+permuteSumMul :: Bool -> [Fix SRTree] -> [Fix SRTree]
+permuteSumMul False ts = ts
+permuteSumMul True  ts = concatMap (Prelude.take maxPermRows . permuteTree) ts
+
+-- | Upper bound on the number of orderings shown per expression (a k-ary
+-- sum/product has k! orderings).
+maxPermRows :: Int
+maxPermRows = 1000
+
+-- | All distinct orderings of the children of every @+@ and @*@ node of a
+-- tree, natural order first. Only @+@ and @*@ chains are permuted; @-@,
+-- @/@, ... are kept intact (their subtrees are still permuted). Chains are
+-- rebuilt right-associated, matching 'naryTreeOp', so the natural ordering
+-- reproduces the extracted tree.
+permuteTree :: Fix SRTree -> [Fix SRTree]
+permuteTree t = nubBy (\a b -> showExpr a == showExpr b) (t : alternatives t)
+  where
+    alternatives tr = case tr of
+      Fix (Bin Add _ _) -> chainAlts Add (flattenChain Add tr)
+      Fix (Bin Mul _ _) -> chainAlts Mul (flattenChain Mul tr)
+      Fix (Uni f c)     -> [ Fix (Uni f c') | c' <- permuteTree c ]
+      Fix (Bin op l r)  -> [ Fix (Bin op l' r') | l' <- permuteTree l, r' <- permuteTree r ]
+      _                 -> []
+    chainAlts op cs =
+      [ foldr1 (\a b -> Fix (Bin op a b)) combo
+      | order <- permutations cs
+      , combo <- mapM permuteTree order ]
+    flattenChain op (Fix (Bin op' l r)) | op' == op = flattenChain op l ++ flattenChain op r
+    flattenChain _ tr = [tr]
 
 -- Helper: collect e-class IDs from an ENode (for DBGetNEclasses)
 collectEClassIds :: ENode -> [EClassId]
