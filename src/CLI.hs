@@ -175,8 +175,8 @@ eqSatCmd dist trainData testData (arg:rest) =
 getNExprsCmd :: [String] -> Repl ()
 getNExprsCmd (arg1:arg2:rest) = case  ((,) <$> readMaybe @Int arg1 <*> readMaybe @Int arg2) of
                                   Nothing -> liftIO.putStrLn $ "Both arguments should be an integer."
-                                  Just (n,eid) -> let mode = if null rest then "off" else head rest
-                                                  in egraph $ run (GetNExprs n eid mode) >>= printFun [] [] (NLL Gaussian)
+                                  Just (n,eid) -> let opts = unwords rest
+                                                  in egraph $ run (GetNExprs n eid opts) >>= printFun [] [] (NLL Gaussian)
 getNExprsCmd _ = helpCmd ["getNExprs"]
 
 subtreesCmd :: [String] -> Repl ()

@@ -19,6 +19,13 @@
   be written as single letters (e.g. `x + 0`).
 - Requires `srtree >= 3.0.1.0`, `srtree-db >= 0.1.5.0`.
 
+### Rule parsing correctness
+
+- Requires `srtree >= 3.0.2.0`: user rules no longer silently truncate on
+  parse errors (a rule with an unknown function, e.g. `negate(v1)` before
+  this release, could quietly become a different — unsound — rule and hang
+  eqsat), and `negate`/`neg` are available in the rule vocabulary.
+
 ### getNExpressions sum/mul permutations
 
 - `getNExprs FILE DATASET N EID [off|permutations]` (Python
