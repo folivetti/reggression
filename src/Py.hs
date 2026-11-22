@@ -115,14 +115,18 @@ loadCmd varnames _ = helpCmd ["load"]
 importCmd varnames loss vars (db:eqs:ds:_) = let (f, fp) = splitColon db in run (ImportDB f fp eqs ds loss vars True) >>= printFun varnames [] [] loss
 importCmd varnames _ _ _ = helpCmd ["import"]
 
-eqSatCmd varnames (fname:ds:n:rs:_) = case readMaybe @Int n of
+eqSatCmd varnames (fname:ds:n:rest) = case readMaybe @Int n of
                                         Nothing -> pure "The n must be an integer."
-                                        Just k  -> let (f, fp) = splitColon fname in run (DBEqSat f fp ds k rs) >>= printFun varnames [] [] (NLL Gaussian)
+                                        Just k  -> let (f, fp) = splitColon fname
+                                                       rs = if null rest then "default" else unwords rest
+                                                   in run (DBEqSat f fp ds k rs) >>= printFun varnames [] [] (NLL Gaussian)
 eqSatCmd varnames _ = helpCmd ["eqsat"]
 
-eqSatFrontierCmd varnames (fname:ds:n:rs:_) = case readMaybe @Int n of
+eqSatFrontierCmd varnames (fname:ds:n:rest) = case readMaybe @Int n of
                                         Nothing -> pure "The n must be an integer."
-                                        Just k  -> let (f, fp) = splitColon fname in run (DBEqSatFrontier f fp ds k rs) >>= printFun varnames [] [] (NLL Gaussian)
+                                        Just k  -> let (f, fp) = splitColon fname
+                                                       rs = if null rest then "default" else unwords rest
+                                                   in run (DBEqSatFrontier f fp ds k rs) >>= printFun varnames [] [] (NLL Gaussian)
 eqSatFrontierCmd varnames _ = helpCmd ["eqsat-frontier"]
 
 insertCmd varnames (fname:ds:alg:args) = let (f, fp) = splitColon fname in run (DBInsert f fp ds alg (unwords args)) >>= printFun varnames [] [] (NLL Gaussian)
@@ -194,8 +198,10 @@ subtreesCmd varnames (fname:ds:eid:_) = case readMaybe @Int eid of
     Just n  -> let (f, fp) = splitColon fname in run (DBSubtrees f fp ds n) >>= printFun varnames [] [] (NLL Gaussian)
 subtreesCmd varnames _ = helpCmd ["subtrees"]
 
-getNExprsCmd varnames (fname:ds:n:eid:_) = case (readMaybe @Int n, readMaybe @Int eid) of
-    (Just k, Just e) -> let (f, fp) = splitColon fname in run (DBGetNExprs f fp ds k e) >>= printFun varnames [] [] (NLL Gaussian)
+getNExprsCmd varnames (fname:ds:n:eid:rest) = case (readMaybe @Int n, readMaybe @Int eid) of
+    (Just k, Just e) -> let (f, fp) = splitColon fname
+                            mode = if null rest then "off" else head rest
+                       in run (DBGetNExprs f fp ds k e mode) >>= printFun varnames [] [] (NLL Gaussian)
     _ -> pure "getNExprs requires N EID as integers"
 getNExprsCmd varnames _ = helpCmd ["getNExprs"]
 
@@ -322,8 +328,8 @@ hlpMap = Map.fromList $ Prelude.zip commands
                             , "pareto FILE DATASET [with ci [data FILE]] [by fitness|by dl]: Pareto front over (fitness, size) from the SQLite database FILE."
                             , "report FILE DATASET N: display a detailed report for e-class N from the SQLite database FILE."
                             , "optimize FILE DATASET N: (re)optimize e-class N using NLopt, write fitness back to the SQLite database FILE."
-                            , "eqsat FILE DATASET ITER [RULES]: run ITER equality-saturation iterations out-of-core against the lazily loaded e-graph in SQLite FILE."
-                            , "eqsat-frontier FILE DATASET ITER [RULES]: re-saturate only the frontier of a lazily loaded e-graph in SQLite FILE."
+                            , "eqsat FILE DATASET ITER [RULES]: run ITER equality-saturation iterations out-of-core against the lazily loaded e-graph in SQLite FILE. RULES is a builtin rule set name (default, params, simple, constant, basic, fun, merge-only), @FILE with one rule per line ('#' comments), or inline rules separated by ';' (e.g. \"x + 0 -> x; log(exp(x)) <=> x\"). Conditions: \"x / x -> 1 | isNotZero(x)\"."
+                            , "eqsat-frontier FILE DATASET ITER [RULES]: re-saturate only the frontier of a lazily loaded e-graph in SQLite FILE. RULES as in eqsat."
                             , "insert FILE DATASET EXPR: insert a single expression into the DB-backed e-graph in FILE."
                             , "insert-check FILE DATASET EXPR: like insert, but returns \"EID,1\" if the expression already existed or \"EID,0\" if it was new (no fitting)."
                             , "set-fit FILE DATASET EID FITNESS: record the fitness of e-class EID in the fit database."
@@ -331,7 +337,7 @@ hlpMap = Map.fromList $ Prelude.zip commands
                             , "push-fit FILE DATASET: write fitness/DL metrics into the fit table of the SQLite database FILE."
                             , "refresh-fitness FILE DATASET: overwrite in-memory fitness values with those stored in the fit table of the SQLite database FILE."
                             , "subtrees FILE DATASET N: list all e-class IDs in the best expression tree rooted at N from the SQLite database FILE."
-                            , "getNExprs FILE DATASET N EID: get up to N equivalent expressions from e-class EID in the SQLite database FILE."
+                            , "getNExprs FILE DATASET N EID [off|permutations]: get up to N equivalent expressions from e-class EID in the SQLite database FILE. With 'permutations', also lists the distinct orderings of the children of every sum/product (e.g. x + 2*x + log(x), 2*x + x + log(x), ...), natural order first."
                             , "getNEclasses FILE DATASET N EID: get e-class ID sets for up to N expression variants from EID in the SQLite database FILE."
                             , "canonical-eid FILE DATASET EID: resolve EID to its canonical e-class id after equality saturation."
                             , "canonical-expressions FILE DATASET [N]: list Id,Expression,Size,Key for canonical e-classes (all when N <= 0)."

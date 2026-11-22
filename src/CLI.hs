@@ -166,15 +166,17 @@ optimizeCmd dist trainData testData args =
  
 eqSatCmd :: Loss -> [DataSet] -> [DataSet] -> [String] -> Repl ()
 eqSatCmd _ _ _ [] = helpCmd ["eqsat"]
-eqSatCmd dist trainData testData (arg:_) =
+eqSatCmd dist trainData testData (arg:rest) =
   case readMaybe @Int arg of
        Nothing -> liftIO.putStrLn $ "The argument must be an integer."
-       Just n  -> egraph $ run (EqSatStep n (dist, trainData, trainData)) >>= printFun trainData testData dist
+       Just n  -> let rs = if null rest then "default" else unwords rest
+                  in egraph $ run (EqSatStep n rs (dist, trainData, trainData)) >>= printFun trainData testData dist
 
 getNExprsCmd :: [String] -> Repl ()
-getNExprsCmd (arg1:arg2:_) = case  ((,) <$> readMaybe @Int arg1 <*> readMaybe @Int arg2) of
+getNExprsCmd (arg1:arg2:rest) = case  ((,) <$> readMaybe @Int arg1 <*> readMaybe @Int arg2) of
                                   Nothing -> liftIO.putStrLn $ "Both arguments should be an integer."
-                                  Just (n,eid) -> egraph $ run (GetNExprs n eid) >>= printFun [] [] (NLL Gaussian)
+                                  Just (n,eid) -> let mode = if null rest then "off" else head rest
+                                                  in egraph $ run (GetNExprs n eid mode) >>= printFun [] [] (NLL Gaussian)
 getNExprsCmd _ = helpCmd ["getNExprs"]
 
 subtreesCmd :: [String] -> Repl ()
@@ -293,8 +295,8 @@ hlpMap = Map.fromList $ Prelude.zip commands
                             , topHlp
                             , "report N: displays a detailed report for the expression with id N."
                             , "optimize N: (re)optimize expression with id N."
-                            , "eqsat N: run N steps of equality saturation and refit any expression with changed number of parameters."
-                            , "getNExprs N id: get N equivalent expressions rooted at id."
+                            , "eqsat N [RULES]: run N steps of equality saturation and refit any expression with changed number of parameters. RULES is a builtin rule set name (default, params, simple, constant, basic, fun, merge-only), @FILE with one rule per line, or inline rules separated by ';' (e.g. \"x + 0 -> x; log(exp(x)) <=> x\")."
+                            , "getNExprs N id [off|permutations]: get N equivalent expressions rooted at id; 'permutations' also shows the distinct orderings of the children of every sum/product."
                             , "subtrees N: shows the subtrees for the tree rotted with id N."
                             , "insert EXPR: inserts a new expression EXPR and evaluates."
                             , countHlp

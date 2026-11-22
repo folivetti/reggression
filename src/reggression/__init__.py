@@ -96,6 +96,18 @@ def reggression_run(myCmd : str, dataset : str, testData : str, loss : str, load
     with hs_rts_init(["reggression", "+RTS", "-F1.2", "-RTS"]):
         return unsafe_hs_reggression_run(myCmd, dataset, testData, loss, loadFrom, dumpTo, parseCSV, parseParams, calcDL, calcFit, varnames)
 
+def _ruleset_arg(ruleset):
+    """Normalize a ruleset spec into its command-string form.
+
+    Accepts a builtin rule set name ("default", "params", "simple",
+    "constant", "basic", "fun", "merge-only"), "@FILE" with one rule per
+    line ("#" comments), a single rule string, or a list of rule strings
+    (joined with ";").
+    """
+    if isinstance(ruleset, (list, tuple)):
+        return "; ".join(str(r) for r in ruleset)
+    return str(ruleset)
+
 class Reggression():
     """ Starts up the r🥚ression engine.
 
@@ -409,18 +421,65 @@ class Reggression():
         '''
         cistr = " with ci" if ci else ""
         return self.runQuery(f"optimize {self._dbSpec()} {self.dataset_name} {self.dataset} {n}{cistr} {self.loss_arg}", df=False)
-    def eqsat(self, n=1):
+    def eqsat(self, n=1, ruleset="default"):
         ''' run n steps of equality saturation
-        sequentially for each rule (see https://github.com/folivetti/srtree/blob/main/src/Algorithm/EqSat/Simplify.hs)
+
+        Parameters
+        ----------
+
+        n : int, default=1
+            Number of equality-saturation iterations.
+
+        ruleset : str or list of str, default="default"
+            Which equivalence rules to use:
+
+            - a builtin rule set name: "default", "params", "simple",
+              "constant", "basic", "fun" or "merge-only";
+            - "@FILE": a text file with one rule per line ("#" comments);
+            - a rule string or list of rule strings (joined with ";"),
+              e.g. "x + 0 -> x; log(exp(x)) <=> x".
+
+            A rule is written as `lhs -> rhs` (one-way) or `lhs <=> rhs`
+            (bidirectional), optionally with conditions on the matched
+            pattern variables: "x / x -> 1 | isNotZero(x), isPositive(y)".
+            Patterns use the usual expression syntax where `x<i>` is
+            variable i, `t<i>` is parameter i, and single letters (or
+            `v<i>`) are wildcards. Known conditions: isConst, isConstPos,
+            isNotParam, isNotZero, isEven, isInteger, isPositive, isValid.
+
+            See the built-in rules at
+            https://github.com/folivetti/srtree/blob/main/src/Algorithm/EqSat/Simplify.hs
+
         Note: if the e-graph is large, this will take some seconds. This will not ensure saturation as it will run each rule
         sequentially.
         '''
-        query = f"eqsat {self._dbSpec()} {self.dataset_name} {n} default"
+        rs = _ruleset_arg(ruleset)
+        query = f"eqsat {self._dbSpec()} {self.dataset_name} {n} {rs}"
         return self.runQuery(query, df=False)
-    def getNExpressions(self, eid, n=10):
-        ''' return n expressions described by e-class id eid 
+    def getNExpressions(self, eid, n=10, permutations="off"):
+        ''' return n expressions described by e-class id eid
+
+        Parameters
+        ----------
+
+        eid : int
+            E-class id
+
+        n : int, default=10
+            Maximum number of expressions (one per e-node of the e-class)
+
+        permutations : bool or str, default="off"
+            If True or "permutations", also display the distinct orderings of
+            the children of every sum and product in each expression (e.g.
+            `x + 2*x + log(x)`, `2*x + x + log(x)`, `log(x) + x + 2*x`, ...),
+            natural order first. If False or "off", display each expression
+            once (one row per e-node).
         '''
-        return self.runQuery(f"getNExprs {self._dbSpec()} {self.dataset_name} {n} {eid}")
+        if isinstance(permutations, bool):
+            perms = "permutations" if permutations else "off"
+        else:
+            perms = str(permutations)
+        return self.runQuery(f"getNExprs {self._dbSpec()} {self.dataset_name} {n} {eid} {perms}")
     def subtrees(self, n):
         ''' Return the subtrees of e-class n
 
@@ -705,18 +764,46 @@ class Reggression():
         fd = fitDb or self.fitDb
         dbSpec = f"{db}:{fd}" if fd else db
         return self.runQuery(f"refresh-fitness {dbSpec} {self.dataset_name}", df=False)
+    def dbEqSat(self, fname="", iterations=10, ruleset="default", fitDb=""):
+        ''' Run equality saturation fully out-of-core against the e-graph
+        stored in `fname`: the graph is lazily loaded from the DB, saturated,
+        and written back. O(1) memory (paged). See `eqsat` for the `ruleset`
+        syntax (builtin name, "@FILE", or inline rules separated by ";").
+
+        Parameters
+        ----------
+
+        fname : str, default=""
+            SQLite database filename. If empty, uses self.db.
+
+        iterations : int, default=10
+            Number of equality-saturation iterations.
+
+        ruleset : str or list of str, default="default"
+            Rule set specification (see `eqsat`).
+
+        fitDb : str, default=""
+            Optional separate fit database filename.
+        '''
+        db = fname or self.db
+        fd = fitDb or self.fitDb
+        dbSpec = f"{db}:{fd}" if fd else db
+        rs = _ruleset_arg(ruleset)
+        return self.runQuery(f"eqsat {dbSpec} {self.dataset_name} {iterations} {rs}", df=False)
     def dbEqSatFrontier(self, fname="", iterations=10, ruleset="default", fitDb=""):
         ''' Re-saturate only the frontier of a lazily loaded (out-of-core) e-graph:
         the e-classes that were created or merged since the last re-saturation pass
         (tracked in the DB's `frontier` table). The matcher's candidate roots are
         restricted to the frontier, so unchanged parts of the graph are not re-worked.
         The frontier is cleared afterwards. O(1) memory (paged). The pure in-memory
-        eggp loop and a full `dbEqSat` are unaffected.
+        eggp loop and a full `dbEqSat` are unaffected. See `eqsat` for the
+        `ruleset` syntax (builtin name, "@FILE", or inline rules separated by ";").
         '''
         db = fname or self.db
         fd = fitDb or self.fitDb
         dbSpec = f"{db}:{fd}" if fd else db
-        return self.runQuery(f"eqsat-frontier {dbSpec} {self.dataset_name} {iterations} {ruleset}", df=False)
+        rs = _ruleset_arg(ruleset)
+        return self.runQuery(f"eqsat-frontier {dbSpec} {self.dataset_name} {iterations} {rs}", df=False)
     def dbInsert(self, fname="", expr="", alg="TIR", fitDb=""):
         ''' Local eggp delta: insert a single expression into the DB-backed
         (out-of-core) e-graph in `fname`. Its subgraph is written through and

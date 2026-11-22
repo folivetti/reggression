@@ -1,5 +1,31 @@
 # Changelog for reggression
 
+## 2.6.0
+
+### User-supplied equivalence rules
+
+- `eqsat` / `eqsat-frontier` (and the Python `eqsat`, `dbEqSat`,
+  `dbEqSatFrontier` methods) accept a rule set specification: a builtin name
+  (`default`, `params`, `simple`, `constant`, `basic`, `fun`, `merge-only`),
+  `@FILE` with one rule per line (`#` comments), or inline rules separated by
+  `;` (e.g. `"x + 0 -> x; log(exp(x)) <=> x"`). Rules are written as
+  `lhs -> rhs` (also `=>`), `lhs <=> rhs` (also `==`), with optional
+  conditions on the matched wildcards (`x / x -> 1 | isNotZero(x)`); invalid
+  specs and rules are rejected with helpful messages.
+- New Python method `dbEqSat(fname, iterations, ruleset, fitDb)`: full
+  out-of-core re-saturation against a stored e-graph. `eqsat(n, ruleset=...)`
+  gained the `ruleset` parameter. CLI: `eqsat N [RULES]`.
+- `parsePat` now uses `srtree`'s `Text.ParseRule`; pattern variables can also
+  be written as single letters (e.g. `x + 0`).
+- Requires `srtree >= 3.0.1.0`, `srtree-db >= 0.1.5.0`.
+
+### getNExpressions sum/mul permutations
+
+- `getNExprs FILE DATASET N EID [off|permutations]` (Python
+  `getNExpressions(eid, n, permutations=...)`; CLI `getNExprs N id [...]`)
+  can display the orderings of the children of every `+` and `*` node, natural
+  order first (up to 1000 rows per expression).
+
 ## 2.5.1
 
 ### Split-DB fixes
