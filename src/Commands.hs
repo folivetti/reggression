@@ -1353,13 +1353,13 @@ run (DBSubtrees fname fitPath ds eid) = do
 
 -- | DB-native getNExprs: extract up to N expression variants from a single
 -- e-class by reading its page and iterating over e-nodes.
-run (DBGetNExprs fname fitPath ds n eid mode) =
-  case parsePermuteMode mode of
+run (DBGetNExprs fname fitPath ds n eid opts) =
+  case parseDisplayArgs (words opts) of
     Left err -> pure . SimpleStr $ "getNExprs failed: " <> err
-    Right perm -> do
+    Right (perm, asDiv, asSqr) -> do
       ts <- liftIO $ withBackend fname $ \db -> extractNFromDB db n 15 eid
       let exprs = nubBy (\a b -> showExpr a == showExpr b) ts
-          rows = [showExpr t | t <- permuteSumMul perm exprs]
+          rows = nub [showExprOpts asDiv asSqr t | t <- permuteSumMul perm exprs]
       pure . SimpleStr $ intercalate "\n" ("Expression" : rows)
 
 -- | DB-native getNEclasses: like getNExprs but returns e-class ID sets.
@@ -1686,11 +1686,14 @@ run (EqSatStep n rs dataInfo) = do
                       refitChanged dataInfo
                       pure NoPrint
 
-run (GetNExprs n eid mode) =
-  case parsePermuteMode mode of
+run (GetNExprs n eid opts) =
+  case parseDisplayArgs (words opts) of
     Left err -> pure . SimpleStr $ "getNExprs failed: " <> err
-    Right perm -> do ts <- getNExpressionsFrom n eid
-                     pure $ MultiTrees $ permuteSumMul perm ts
+    Right (perm, asDiv, asSqr)
+      | asDiv || asSqr -> pure . SimpleStr $
+          "getNExprs failed: the div and sqr display options are only supported by the DB-native getNExprs"
+      | otherwise -> do ts <- getNExpressionsFrom n eid
+                        pure $ MultiTrees $ permuteSumMul perm ts
 
 run (GetNEclass n eid) = do
   ids <- getNEclassFrom n eid
@@ -2239,15 +2242,54 @@ extractNFromDB db n d eid = do
 
 -- * Permutations of sum and product children
 
--- | Parses the optional mode argument of @getNExprs@: @off@ (default, one row
--- per expression) or @permutations@ (one row per distinct ordering of the
--- children of every sum/product, natural order first).
-parsePermuteMode :: String -> Either String Bool
-parsePermuteMode s
-  | m `elem` ["", "off", "none", "false", "no"] = Right False
-  | m `elem` ["permutations", "permute", "perms", "on", "true", "yes"] = Right True
-  | otherwise = Left ("unknown mode '" <> s <> "': use 'off' or 'permutations'")
-  where m = map toLower s
+-- | Parses the optional arguments of @getNExprs@: the permutation mode
+-- (@off@ = one row per expression, @permutations@ = one row per distinct
+-- ordering of the children of every sum/product) and the display options
+-- @div@ and @sqr@ (see 'showExprOpts').
+parseDisplayArgs :: [String] -> Either String (Bool, Bool, Bool)
+parseDisplayArgs = foldM step (False, False, False)
+  where
+    step (p, d, s) tok = case map toLower tok of
+      m | m `elem` ["off", "none", "false", "no"] -> Right (False, d, s)
+        | m `elem` ["permutations", "permute", "perms", "on", "true", "yes"] -> Right (True, d, s)
+        | m == "div" -> Right (p, True, s)
+        | m == "sqr" -> Right (p, d, True)
+        | otherwise -> Left ("unknown option '" <> tok <> "': use off|permutations, div, sqr")
+
+-- | Renders a tree like 'showExpr' with optional display rewrites: @div@
+-- renders @Recip@ factors inside a product as divisions (@x * Recip(y)@ is
+-- shown as @(x / y)@), @sqr@ renders squares as @SQR(x)@ instead of
+-- @(x ^ 2.0)@. With both options off this is exactly 'showExpr'.
+showExprOpts :: Bool -> Bool -> Fix SRTree -> String
+showExprOpts False False = showExpr
+showExprOpts asDiv asSqr = go
+  where
+    go (Fix (Var ix))   = 'x' : show ix
+    go (Fix (Param ix)) = 't' : show ix
+    go (Fix (Const c))  = show c
+    go (Fix (Y ix))     = 'y' : show ix
+    -- same rewrites as Data.SRTree.Print.removeProtection
+    go (Fix (Uni SqrtAbs t))    = go (Fix (Uni Sqrt (Fix (Uni Abs t))))
+    go (Fix (Uni LogAbs t))     = go (Fix (Uni Log (Fix (Uni Abs t))))
+    go (Fix (Uni Cube t))       = go (Fix (Bin Power t (Fix (Const 3))))
+    go (Fix (Bin PowerAbs l r)) = go (Fix (Bin Power (Fix (Uni Abs l)) r))
+    go (Fix (Bin AQ l r))       = go (Fix (Bin Div l (Fix (Uni Sqrt (Fix (Bin Add (Fix (Const 1)) (Fix (Bin Mul r r))))))))
+    -- sqr: x ^ 2 as SQR(x)
+    go (Fix (Bin Power t (Fix (Const c)))) | asSqr, c == 2 = "SQR(" <> go t <> ")"
+    -- div: flatten products containing Recip factors into num/denominator
+    go t@(Fix (Bin Mul _ _)) | asDiv, any isRec (flattenMul t) = renderChain (flattenMul t)
+    go (Fix (Uni f t))    = show f <> "(" <> go t <> ")"
+    go (Fix (Bin op l r)) = "(" <> go l <> " " <> showOp op <> " " <> go r <> ")"
+    isRec (Fix (Uni Recip _)) = True
+    isRec _ = False
+    flattenMul (Fix (Bin Mul l r)) = flattenMul l ++ flattenMul r
+    flattenMul x = [x]
+    renderChain fs =
+      let (dens, nums) = foldr (\f (ds, ns) -> case f of
+                                  Fix (Uni Recip r) -> (go r : ds, ns)
+                                  _                 -> (ds, go f : ns)) ([], []) fs
+          numStr = if null nums then "1" else intercalate " * " nums
+      in "(" <> numStr <> concatMap (" / " <>) dens <> ")" 
 
 -- | Expands each tree into its distinct sum/mul orderings when the flag is
 -- set (natural order first), keeping the input as-is otherwise.

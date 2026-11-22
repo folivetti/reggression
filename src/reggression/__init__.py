@@ -456,7 +456,7 @@ class Reggression():
         rs = _ruleset_arg(ruleset)
         query = f"eqsat {self._dbSpec()} {self.dataset_name} {n} {rs}"
         return self.runQuery(query, df=False)
-    def getNExpressions(self, eid, n=10, permutations="off"):
+    def getNExpressions(self, eid, n=10, permutations="off", asDiv=False, asSqr=False):
         ''' return up to n expressions equivalent to e-class id eid
 
         The expressions are enumerated by crossing the e-node alternatives of
@@ -476,14 +476,21 @@ class Reggression():
             If True or "permutations", also display the distinct orderings of
             the children of every sum and product in each expression (e.g.
             `x + 2*x + log(x)`, `2*x + x + log(x)`, `log(x) + x + 2*x`, ...),
-            natural order first. If False or "off", display each expression
-            once (one row per e-node).
+            natural order first. If False or "off", display each expression once.
+
+        asDiv : bool, default=False
+            Render Recip factors inside products as division (x * Recip(y) is
+            shown as (x / y)).
+
+        asSqr : bool, default=False
+            Render squares as `SQR(x)` instead of `(x ^ 2.0)`.
         '''
-        if isinstance(permutations, bool):
-            perms = "permutations" if permutations else "off"
-        else:
-            perms = str(permutations)
-        return self.runQuery(f"getNExprs {self._dbSpec()} {self.dataset_name} {n} {eid} {perms}")
+        opts = ["permutations" if permutations else "off"] if isinstance(permutations, bool) else [str(permutations)]
+        if asDiv:
+            opts.append("div")
+        if asSqr:
+            opts.append("sqr")
+        return self.runQuery(f"getNExprs {self._dbSpec()} {self.dataset_name} {n} {eid} {' '.join(opts)}")
     def subtrees(self, n):
         ''' Return the subtrees of e-class n
 

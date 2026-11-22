@@ -29,6 +29,10 @@
   equivalent to the e-class by crossing the e-node alternatives of its
   sub-classes (`extractNFromDB`), instead of one tree per root e-node — so
   rewritten equivalents are visible from the root e-class.
+- `getNExprs` display options (Python `getNExpressions(..., asDiv=, asSqr=)`):
+  `div` renders Recip factors inside products as division (`x * Recip(y)` is
+  shown as `(x / y)`), `sqr` renders squares as `SQR(x)` instead of
+  `(x ^ 2.0)`.
 
 ## 2.5.1
 

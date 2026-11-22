@@ -200,8 +200,8 @@ subtreesCmd varnames _ = helpCmd ["subtrees"]
 
 getNExprsCmd varnames (fname:ds:n:eid:rest) = case (readMaybe @Int n, readMaybe @Int eid) of
     (Just k, Just e) -> let (f, fp) = splitColon fname
-                            mode = if null rest then "off" else head rest
-                       in run (DBGetNExprs f fp ds k e mode) >>= printFun varnames [] [] (NLL Gaussian)
+                            opts = unwords rest
+                       in run (DBGetNExprs f fp ds k e opts) >>= printFun varnames [] [] (NLL Gaussian)
     _ -> pure "getNExprs requires N EID as integers"
 getNExprsCmd varnames _ = helpCmd ["getNExprs"]
 
@@ -337,7 +337,7 @@ hlpMap = Map.fromList $ Prelude.zip commands
                             , "push-fit FILE DATASET: write fitness/DL metrics into the fit table of the SQLite database FILE."
                             , "refresh-fitness FILE DATASET: overwrite in-memory fitness values with those stored in the fit table of the SQLite database FILE."
                             , "subtrees FILE DATASET N: list all e-class IDs in the best expression tree rooted at N from the SQLite database FILE."
-                            , "getNExprs FILE DATASET N EID [off|permutations]: get up to N distinct expressions equivalent to e-class EID (enumerated across the e-node alternatives of its sub-classes) from the SQLite database FILE. With 'permutations', also lists the distinct orderings of the children of every sum/product (e.g. x + 2*x + log(x), 2*x + x + log(x), ...), natural order first."
+                            , "getNExprs FILE DATASET N EID [off|permutations] [div] [sqr]: get up to N distinct expressions equivalent to e-class EID (enumerated across the e-node alternatives of its sub-classes) from the SQLite database FILE. With 'permutations', also lists the distinct orderings of the children of every sum/product (e.g. x + 2*x + log(x), 2*x + x + log(x), ...), natural order first. 'div' renders Recip factors inside products as division (x * Recip(y) shown as (x / y)); 'sqr' renders squares as SQR(x) instead of (x ^ 2.0)."
                             , "getNEclasses FILE DATASET N EID: get e-class ID sets for up to N expression variants from EID in the SQLite database FILE."
                             , "canonical-eid FILE DATASET EID: resolve EID to its canonical e-class id after equality saturation."
                             , "canonical-expressions FILE DATASET [N]: list Id,Expression,Size,Key for canonical e-classes (all when N <= 0)."
