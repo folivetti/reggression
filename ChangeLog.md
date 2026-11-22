@@ -25,6 +25,10 @@
   `getNExpressions(eid, n, permutations=...)`; CLI `getNExprs N id [...]`)
   can display the orderings of the children of every `+` and `*` node, natural
   order first (up to 1000 rows per expression).
+- `getNExprs` (DB-native) now enumerates up to N *distinct* expressions
+  equivalent to the e-class by crossing the e-node alternatives of its
+  sub-classes (`extractNFromDB`), instead of one tree per root e-node — so
+  rewritten equivalents are visible from the root e-class.
 
 ## 2.5.1
 

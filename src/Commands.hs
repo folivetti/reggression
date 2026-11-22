@@ -1357,15 +1357,9 @@ run (DBGetNExprs fname fitPath ds n eid mode) =
   case parsePermuteMode mode of
     Left err -> pure . SimpleStr $ "getNExprs failed: " <> err
     Right perm -> do
-      exprs <- liftIO $ withBackend fname $ \db -> do
-        mPage <- readPage db eid
-        case mPage of
-          Nothing -> pure []
-          Just page -> do
-            let ec = decode page :: EClass
-                nodes = Prelude.take n $ Set.toList (_eNodes ec)
-            forM nodes $ \en -> extractTreeFromNode db IntSet.empty 0 en
-      let rows = [showExpr t | t <- permuteSumMul perm [t | Just t <- exprs]]
+      ts <- liftIO $ withBackend fname $ \db -> extractNFromDB db n 15 eid
+      let exprs = nubBy (\a b -> showExpr a == showExpr b) ts
+          rows = [showExpr t | t <- permuteSumMul perm exprs]
       pure . SimpleStr $ intercalate "\n" ("Expression" : rows)
 
 -- | DB-native getNEclasses: like getNExprs but returns e-class ID sets.
@@ -2210,6 +2204,38 @@ expandNaryNodes db seen n ((cid, cnt) : rest) = do
 naryTreeOp :: NOp -> [Fix SRTree] -> Fix SRTree
 naryTreeOp _ [] = Fix (Var 0)
 naryTreeOp op ts = foldr1 (\a b -> Fix (Bin (toOp op) a b)) ts
+
+-- | Enumerates up to @n@ expressions rooted at @eid@ by crossing the e-node
+-- alternatives of every child e-class (the DB-native counterpart of
+-- 'getNExpressionsFrom'), with a depth cap @d@ (15, as in the in-memory
+-- version). The caller dedupes; 'naryTreeOp' rebuilds n-ary nodes.
+extractNFromDB :: SqlBackend db => db -> Int -> Int -> EClassId -> IO [Fix SRTree]
+extractNFromDB _ _ 0 _ = pure []
+extractNFromDB db n d eid = do
+  mPage <- readPage db eid
+  case mPage of
+    Nothing -> pure []
+    Just page -> do
+      let nodes = Set.toList (_eNodes (decode page :: EClass))
+      concat <$> go n d nodes
+  where
+    go _ _ [] = pure []
+    go _ 0 _  = pure []
+    go n' d' (node:ns) = do
+      tt <- case node of
+              EVar ix     -> pure [Fix (Var ix)]
+              EParam ix   -> pure [Fix (Param ix)]
+              EConst x    -> pure [Fix (Const x)]
+              EUni f t    -> Prelude.map (Fix . Uni f) <$> extractNFromDB db n' (d' - 1) t
+              EBin op l r -> do l' <- extractNFromDB db n' (d' - 1) l
+                                r' <- extractNFromDB db n' (d' - 1) r
+                                pure $ Prelude.take n [Fix (Bin op li ri) | li <- l', ri <- r']
+              ENAry op xs -> do tss <- mapM (extractNFromDB db n' (d' - 1)) (expandedList xs)
+                                pure $ Prelude.take n [naryTreeOp op comb | comb <- sequence tss]
+      let n'' = n' - length tt
+      if n'' <= 0
+        then pure [tt]
+        else (tt :) <$> go n'' (d' - 1) ns
 
 -- * Permutations of sum and product children
 

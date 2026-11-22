@@ -457,7 +457,11 @@ class Reggression():
         query = f"eqsat {self._dbSpec()} {self.dataset_name} {n} {rs}"
         return self.runQuery(query, df=False)
     def getNExpressions(self, eid, n=10, permutations="off"):
-        ''' return n expressions described by e-class id eid
+        ''' return up to n expressions equivalent to e-class id eid
+
+        The expressions are enumerated by crossing the e-node alternatives of
+        the e-class and its sub-classes (so rewritten equivalents show up
+        here), deduplicated by their printed form.
 
         Parameters
         ----------
@@ -466,7 +470,7 @@ class Reggression():
             E-class id
 
         n : int, default=10
-            Maximum number of expressions (one per e-node of the e-class)
+            Maximum number of distinct expressions to return
 
         permutations : bool or str, default="off"
             If True or "permutations", also display the distinct orderings of
