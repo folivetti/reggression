@@ -58,7 +58,7 @@ def _preload_peer_ffi(pkg_name: str) -> None:
 
 _preload_peer_ffi("eggp")
 
-VERSION: str = "2.5.1"
+VERSION: str = "2.7.0"
 
 
 _hs_rts_init: bool = False
