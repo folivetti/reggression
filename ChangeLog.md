@@ -41,7 +41,9 @@
   factor before them (`Mul[x, y, Recip z]` shown as `x * (y / z)`,
   `Mul[x, Recip z, y]` as `(x / z) * y`, `Mul[Recip z, x, y]` as
   `(1 / z) * x * y`) so permuted orderings stay distinct; `sqr` renders
-  squares as `SQR(x)` instead of `(x ^ 2.0)`.
+  squares as `SQR(x)` instead of `(x ^ 2.0)`. Division chains are
+  parenthesized like any compound (`t0 ^ (t1 * (SQR(x0) / SQR(x1)))`), so
+  nested renderings are unambiguous.
 
 ## 2.5.1
 

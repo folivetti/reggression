@@ -2288,7 +2288,7 @@ showExprOpts asDiv asSqr = go
     -- before it (or 1 when it comes first): Mul[x, y, Recip z] renders as
     -- x * (y / z), Mul[x, Recip z, y] as (x / z) * y, Mul[Recip z, x, y] as
     -- (1 / z) * x * y -- so permutations keep distinct renderings.
-    renderChain fs = intercalate " * " (units fs)
+    renderChain fs = "(" <> intercalate " * " (units fs) <> ")"
       where
         units [] = []
         units (f : rest) = case f of
