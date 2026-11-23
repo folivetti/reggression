@@ -19,6 +19,14 @@
   be written as single letters (e.g. `x + 0`).
 - Requires `srtree >= 3.0.1.0`, `srtree-db >= 0.1.5.0`.
 
+### Rest patterns in user rules (`...`)
+
+- Rule patterns support `...` matching the remaining factors/summands of a
+  product/sum of any arity (e.g. `exp(v1) * ... -> recip(exp(negate(v1))) * ...`
+  rewrites the `exp` factor inside any product). Required for expressions like
+  `t0 * exp(...)/x1`, whose product is a flat 3-factor multiset that a
+  two-factor pattern cannot match (n-ary matching is exact-multiset).
+
 ### Rule parsing correctness
 
 - Requires `srtree >= 3.0.2.0`: user rules no longer silently truncate on

@@ -444,7 +444,11 @@ class Reggression():
             pattern variables: "x / x -> 1 | isNotZero(x), isPositive(y)".
             Patterns use the usual expression syntax where `x<i>` is
             variable i, `t<i>` is parameter i, and single letters (or
-            `v<i>`) are wildcards. Known conditions: isConst, isConstPos,
+            `v<i>`) are wildcards. `...` matches the remaining factors of a
+            product (or summands of a sum) of any arity, e.g.
+            `exp(v1) * ... -> recip(exp(negate(v1))) * ...` rewrites the
+            `exp` factor inside any product (needed because products are
+            matched as exact multisets of their factors). Known conditions: isConst, isConstPos,
             isNotParam, isNotZero, isEven, isInteger, isPositive, isValid.
 
             See the built-in rules at
